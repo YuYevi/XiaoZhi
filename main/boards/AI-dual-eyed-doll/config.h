@@ -1,0 +1,65 @@
+#ifndef _BOARD_CONFIG_H_
+#define _BOARD_CONFIG_H_
+
+#include <driver/gpio.h>
+#include <hal/adc_types.h>
+
+/* ==================== Audio (ES8390, driven as ES8389) ==================== */
+#define AUDIO_INPUT_SAMPLE_RATE 24000
+#define AUDIO_OUTPUT_SAMPLE_RATE 24000
+#define AUDIO_INPUT_REFERENCE false
+#define AUDIO_INPUT_CHANNELS 2
+
+#define AUDIO_I2S_GPIO_MCLK GPIO_NUM_45
+#define AUDIO_I2S_GPIO_WS GPIO_NUM_46
+#define AUDIO_I2S_GPIO_BCLK GPIO_NUM_41
+#define AUDIO_I2S_GPIO_DOUT GPIO_NUM_42
+#define AUDIO_I2S_GPIO_DIN GPIO_NUM_40
+
+#define AUDIO_CODEC_I2C_SCL_PIN GPIO_NUM_6
+#define AUDIO_CODEC_I2C_SDA_PIN GPIO_NUM_7
+#define AUDIO_CODEC_ES8389_ADDR ES8389_CODEC_DEFAULT_ADDR
+// Hardware rework: KEY_2 removed, PA_SD moved from GPIO35 (PSRAM) to GPIO18, R44 DNP
+#define AUDIO_CODEC_PA_PIN GPIO_NUM_18
+#define AUDIO_CODEC_PA_INVERTED 0
+
+/* ==================== Buttons / power ==================== */
+#define BOOT_BUTTON_GPIO GPIO_NUM_0
+#define KEY_1_BUTTON_GPIO GPIO_NUM_17
+#define PWR_BUTTON_GPIO GPIO_NUM_2
+#define PWR_CONTROL_PIN GPIO_NUM_1
+#define CHARGE_DETECT_PIN GPIO_NUM_16
+#define TOUCH_1_GPIO GPIO_NUM_8
+#define TOUCH_2_GPIO GPIO_NUM_38
+
+#define POWER_BATTERY_ADC_UNIT ADC_UNIT_1
+#define POWER_BATTERY_ADC_CHANNEL ADC_CHANNEL_3
+
+/* ==================== Dual GC9D01N eyes (0.71", 160x160) ==================== */
+#define DISPLAY_WIDTH 160
+#define DISPLAY_HEIGHT 160
+#define DISPLAY_MIRROR_X false
+#define DISPLAY_MIRROR_Y false
+#define DISPLAY_SWAP_XY false
+#define DISPLAY_OFFSET_X 0
+#define DISPLAY_OFFSET_Y 0
+
+#define DISPLAY_SPI_SCK_PIN GPIO_NUM_9
+#define DISPLAY_SPI_MOSI_PIN GPIO_NUM_10
+#define DISPLAY_DC_PIN GPIO_NUM_11
+#define DISPLAY_LEFT_CS_PIN GPIO_NUM_12
+#define DISPLAY_RIGHT_CS_PIN GPIO_NUM_13
+#define DISPLAY_RST_PIN GPIO_NUM_14
+#define DISPLAY_BACKLIGHT_PIN GPIO_NUM_39
+#define DISPLAY_BACKLIGHT_OUTPUT_INVERT false
+
+#define DISPLAY_SPI_HOST SPI2_HOST
+#define DISPLAY_SPI_CLOCK_HZ (40 * 1000 * 1000)
+
+/*
+ * ESP32-S3R8 octal PSRAM occupies GPIO33-37 and GPIO47-48.
+ * Touch_out3 (GPIO37) and Touch_out4 (GPIO36) are left unused.
+ * Touch_out1 = GPIO8, Touch_out2 = GPIO38 (TTP233H, active-high).
+ */
+
+#endif  // _BOARD_CONFIG_H_

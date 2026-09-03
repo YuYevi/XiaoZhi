@@ -342,6 +342,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85
         bool "Waveshare ESP32-S3-Touch-LCD-1.85"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_AI_DUAL_EYED_DOLL
+        bool "AI-dual-eyed-doll (GC9D01N x2)"
+        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_46
         bool "Waveshare ESP32-S3-Touch-LCD-1.46"
         depends on IDF_TARGET_ESP32S3
@@ -790,6 +793,15 @@ choice DISPLAY_STYLE
             || BOARD_TYPE_ESP_VOCAT || BOARD_TYPE_LICHUANG_DEV_S3 || BOARD_TYPE_RYMCU_BIGSMART \
             || BOARD_TYPE_ESP_SENSAIRSHUTTLE
 endchoice
+
+config USE_LVGL
+    bool "Compile LVGL UI and built-in fonts"
+    default n if BOARD_TYPE_AI_DUAL_EYED_DOLL
+    default y
+    help
+        When disabled, the LVGL display stack, xiaozhi-fonts, and emoji
+        collections are not compiled into the firmware. Use this for boards
+        that draw without LVGL, such as bitmap dual-eye panels.
 
 config USE_MULTILINE_CHAT_MESSAGE
     bool "Use multiline chat message display (default mode only)"

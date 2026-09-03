@@ -1,0 +1,40 @@
+# AI-dual-eyed-doll
+
+Custom dual-eye firmware based on XiaoZhi voice conversation. Hardware is **not** pin-compatible with Waveshare ESP32-S3-Touch-LCD-1.85, so this is a unique board identity.
+
+## Hardware
+
+- ESP32-S3R8, ES8390 codec (ES8389 driver), LM4890 speaker amp
+- Two 0.71" GC9D01N 160x160 SPI panels (shared SCLK/MOSI/DC/RST, separate CS)
+- Left eye: CS GPIO12. Right eye: CS GPIO13, hardware-mirrored so both screens share one RGB565 asset
+- In-tree `esp_lcd_gc9d01n` driver (same as LilyGo T-Circle) plus the BOE init sequence from the panel vendor
+- PA_SD on GPIO18 (KEY_2 removed; R44 DNP). GPIO35 is left to octal PSRAM
+- Touch_out3 / Touch_out4 are not enabled (GPIO36/37 are PSRAM pins)
+
+Eyes only show the eight static expressions under `assets/`. The original 1.85" LVGL UI, built-in fonts, and emoji collections are not compiled (`CONFIG_USE_LVGL=n`) and are not flashed (`CONFIG_FLASH_NONE_ASSETS`).
+
+## Controls
+
+| Input | GPIO | Action |
+| --- | --- | --- |
+| Touch 1 | 8 | Happy face + `Short_laugh.ogg` |
+| Touch 2 | 38 | Angry face + `tsundere.ogg` |
+| Power | 2 | Short: screen on/off. Long (~2s): power off (`PWR_CTRL` GPIO1) |
+| KEY 1 | 17 | Short: toggle AI chat. Long: enter/exit WiFi AP config |
+| BOOT | 0 | Unused at runtime (download / reset) |
+
+Wake-word conversation and the original no-SSID boot provisioning path are unchanged. KEY 1 only adds extra triggers.
+
+ES8390 is driven with the shared ES8389 codec. Both analog mics are opened as stereo input (`AUDIO_INPUT_CHANNELS 2`).
+
+## Build
+
+```sh
+python3 scripts/release.py AI-dual-eyed-doll
+```
+
+## Notes
+
+- ESP32-S3R8 octal PSRAM occupies GPIO33-37 and GPIO47-48. Do not use those pads as GPIO.
+- TTP233H touch pads are treated as active-high.
+- Physical hardware still needs to be checked after a successful build.

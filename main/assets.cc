@@ -2,20 +2,24 @@
 #include "application.h"
 #include "board.h"
 #include "display.h"
-#include "emote_display.h"
-#include "expression_emote.h"
-#include "lvgl_theme.h"
 #if HAVE_LVGL
 #include <spi_flash_mmap.h>
 #include "display/lcd_display.h"
 #include "display/lvgl_display/lvgl_display.h"
+#include "lvgl_theme.h"
+#endif
+#if CONFIG_USE_EMOTE_MESSAGE_STYLE
+#include "emote_display.h"
+#include "expression_emote.h"
+#endif
+#ifdef BUILTIN_TEXT_FONT
+#include <cbin_font.h>
+#include <noto_font_bundle.h>
 #endif
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_timer.h>
-#include <cbin_font.h>
-#include <noto_font_bundle.h>
 
 #include <cstring>
 
@@ -31,10 +35,14 @@ struct mmap_assets_table {
 };
 
 Assets::Assets() {
+#ifdef BUILTIN_TEXT_FONT
     UseBuiltInTextFontCapability();
+#else
+    DisableTextFontGlyphPush();
+#endif
 #if HAVE_LVGL
     strategy_ = std::make_unique<Assets::LvglStrategy>();
-#else
+#elif CONFIG_USE_EMOTE_MESSAGE_STYLE
     strategy_ = std::make_unique<Assets::EmoteStrategy>();
 #endif
     // Initialize the partition
@@ -69,6 +77,7 @@ void Assets::UnApplyPartition() {
 }
 
 void Assets::UseBuiltInTextFontCapability() {
+#ifdef BUILTIN_TEXT_FONT
     text_font_capability_ = {
         .glyph_push = true,
         .bundle = NOTO_FONT_BUNDLE_ID,
@@ -76,6 +85,9 @@ void Assets::UseBuiltInTextFontCapability() {
         .size = TEXT_FONT_SIZE,
         .bpp = TEXT_FONT_BPP,
     };
+#else
+    DisableTextFontGlyphPush();
+#endif
 }
 
 void Assets::DisableTextFontGlyphPush() { text_font_capability_ = {}; }
@@ -414,6 +426,7 @@ bool Assets::LvglStrategy::Apply(Assets* assets, bool refresh_display_theme) {
 }
 #endif  // HAVE_LVGL
 
+#if CONFIG_USE_EMOTE_MESSAGE_STYLE
 bool Assets::EmoteStrategy::InitializePartition(Assets* assets) {
     assets->partition_valid_ = false;
 
@@ -484,6 +497,7 @@ bool Assets::EmoteStrategy::Apply(Assets* assets, bool refresh_display_theme) {
     }
     return true;
 }
+#endif  // CONFIG_USE_EMOTE_MESSAGE_STYLE
 
 bool Assets::Download(std::string url,
                       std::function<void(int progress, size_t speed)> progress_callback) {

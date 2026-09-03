@@ -7,22 +7,20 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <material_symbols.h>
 #include <utility>
+#include "network_state_icons.h"
 
-static const char *TAG = "Ml307Board";
+static const char* TAG = "Ml307Board";
 
 // Maximum retry count for modem detection
 static constexpr int MODEM_DETECT_MAX_RETRIES = 30;
 // Maximum retry count for network registration
 static constexpr int NETWORK_REG_MAX_RETRIES = 6;
 
-Ml307Board::Ml307Board(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin) : tx_pin_(tx_pin), rx_pin_(rx_pin), dtr_pin_(dtr_pin) {
-}
+Ml307Board::Ml307Board(gpio_num_t tx_pin, gpio_num_t rx_pin, gpio_num_t dtr_pin)
+    : tx_pin_(tx_pin), rx_pin_(rx_pin), dtr_pin_(dtr_pin) {}
 
-std::string Ml307Board::GetBoardType() {
-    return "ml307";
-}
+std::string Ml307Board::GetBoardType() { return "ml307"; }
 
 void Ml307Board::SetNetworkEventCallback(NetworkEventCallback callback) {
     network_event_callback_ = std::move(callback);
@@ -133,16 +131,16 @@ void Ml307Board::NetworkTask() {
 
 void Ml307Board::StartNetwork() {
     // Create network initialization task and return immediately
-    xTaskCreate([](void* arg) {
-        Ml307Board* board = static_cast<Ml307Board*>(arg);
-        board->NetworkTask();
-        vTaskDelete(NULL);
-    }, "ml307_net", 4096, this, 5, NULL);
+    xTaskCreate(
+        [](void* arg) {
+            Ml307Board* board = static_cast<Ml307Board*>(arg);
+            board->NetworkTask();
+            vTaskDelete(NULL);
+        },
+        "ml307_net", 4096, this, 5, NULL);
 }
 
-NetworkInterface* Ml307Board::GetNetwork() {
-    return modem_.get();
-}
+NetworkInterface* Ml307Board::GetNetwork() { return modem_.get(); }
 
 const char* Ml307Board::GetNetworkStateIcon() {
     if (modem_ == nullptr || !modem_->network_ready()) {
@@ -186,7 +184,7 @@ void Ml307Board::SetPowerSaveLevel(PowerSaveLevel level) {
 std::string Ml307Board::GetDeviceStatusJson() {
     /*
      * 返回设备状态JSON
-     * 
+     *
      * 返回的JSON结构如下：
      * {
      *     "audio_speaker": {
@@ -225,7 +223,7 @@ std::string Ml307Board::GetDeviceStatusJson() {
         cJSON_AddNumberToObject(screen, "brightness", backlight->brightness());
     }
     auto display = board.GetDisplay();
-    if (display && display->height() > 64) { // For LCD display only
+    if (display && display->height() > 64) {  // For LCD display only
         auto theme = display->GetTheme();
         if (theme != nullptr) {
             cJSON_AddStringToObject(screen, "theme", theme->name().c_str());

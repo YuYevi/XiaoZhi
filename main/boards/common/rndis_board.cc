@@ -1,31 +1,27 @@
 #include "rndis_board.h"
-#include "display.h"
 #include "application.h"
-#include "system_info.h"
-#include "settings.h"
 #include "assets/lang_config.h"
+#include "display.h"
+#include "settings.h"
+#include "system_info.h"
 
+#include <esp_log.h>
+#include <esp_network.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <esp_network.h>
-#include <esp_log.h>
 #include <utility>
-#include <material_symbols.h>
+#include "network_state_icons.h"
 
 #if CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3
 
-static const char *TAG = "RndisBoard"; 
+static const char* TAG = "RndisBoard";
 #define EVENT_GOT_IP_BIT (1 << 0)
 
-RndisBoard::RndisBoard() {
-}
+RndisBoard::RndisBoard() {}
 
-RndisBoard::~RndisBoard() {
-}
+RndisBoard::~RndisBoard() {}
 
-std::string RndisBoard::GetBoardType() {
-    return "rndis";
-}
+std::string RndisBoard::GetBoardType() { return "rndis"; }
 
 void RndisBoard::StartNetwork() {
     esp_err_t ret = nvs_flash_init();
@@ -35,57 +31,56 @@ void RndisBoard::StartNetwork() {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
-     /* Initialize default TCP/IP stack */
-     ESP_ERROR_CHECK(esp_netif_init());
-     ESP_ERROR_CHECK(esp_event_loop_create_default());
- 
-     s_event_group = xEventGroupCreate();
-     esp_event_handler_register(IOT_ETH_EVENT, ESP_EVENT_ANY_ID, iot_event_handle, this);
-     esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, iot_event_handle, this);
- 
-     // install usbh cdc driver
-     usbh_cdc_driver_config_t config = {
-         .task_stack_size = 1024 * 4,
-         .task_priority = configMAX_PRIORITIES - 1,
-         .task_coreid = 0,
-         .skip_init_usb_host_driver = false,
-     };
-     ESP_ERROR_CHECK(usbh_cdc_driver_install(&config));
- 
-     install_rndis(USB_DEVICE_VENDOR_ANY, USB_DEVICE_PRODUCT_ANY, "USB RNDIS0");
-     xEventGroupWaitBits(s_event_group, EVENT_GOT_IP_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
-}
- 
+    /* Initialize default TCP/IP stack */
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-void RndisBoard::iot_event_handle(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
-{
+    s_event_group = xEventGroupCreate();
+    esp_event_handler_register(IOT_ETH_EVENT, ESP_EVENT_ANY_ID, iot_event_handle, this);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, iot_event_handle, this);
+
+    // install usbh cdc driver
+    usbh_cdc_driver_config_t config = {
+        .task_stack_size = 1024 * 4,
+        .task_priority = configMAX_PRIORITIES - 1,
+        .task_coreid = 0,
+        .skip_init_usb_host_driver = false,
+    };
+    ESP_ERROR_CHECK(usbh_cdc_driver_install(&config));
+
+    install_rndis(USB_DEVICE_VENDOR_ANY, USB_DEVICE_PRODUCT_ANY, "USB RNDIS0");
+    xEventGroupWaitBits(s_event_group, EVENT_GOT_IP_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+}
+
+void RndisBoard::iot_event_handle(void* arg, esp_event_base_t event_base, int32_t event_id,
+                                  void* event_data) {
     if (event_base == IOT_ETH_EVENT) {
         switch (event_id) {
-        case IOT_ETH_EVENT_START:
-            ESP_LOGI(TAG, "IOT_ETH_EVENT_START");
-            break;
-        case IOT_ETH_EVENT_STOP:
-            ESP_LOGI(TAG, "IOT_ETH_EVENT_STOP");
-            break;
-        case IOT_ETH_EVENT_CONNECTED:
-            ESP_LOGI(TAG, "IOT_ETH_EVENT_CONNECTED");
-            static_cast<RndisBoard*>(arg)->OnNetworkEvent(NetworkEvent::Connected);
-            break;
-        case IOT_ETH_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "IOT_ETH_EVENT_DISCONNECTED");
-            xEventGroupClearBits(static_cast<RndisBoard*>(arg)->s_event_group, EVENT_GOT_IP_BIT);
-            static_cast<RndisBoard*>(arg)->OnNetworkEvent(NetworkEvent::Disconnected);
-            break;
-        default:
-            ESP_LOGI(TAG, "IOT_ETH_EVENT_UNKNOWN");
-            break;
+            case IOT_ETH_EVENT_START:
+                ESP_LOGI(TAG, "IOT_ETH_EVENT_START");
+                break;
+            case IOT_ETH_EVENT_STOP:
+                ESP_LOGI(TAG, "IOT_ETH_EVENT_STOP");
+                break;
+            case IOT_ETH_EVENT_CONNECTED:
+                ESP_LOGI(TAG, "IOT_ETH_EVENT_CONNECTED");
+                static_cast<RndisBoard*>(arg)->OnNetworkEvent(NetworkEvent::Connected);
+                break;
+            case IOT_ETH_EVENT_DISCONNECTED:
+                ESP_LOGI(TAG, "IOT_ETH_EVENT_DISCONNECTED");
+                xEventGroupClearBits(static_cast<RndisBoard*>(arg)->s_event_group,
+                                     EVENT_GOT_IP_BIT);
+                static_cast<RndisBoard*>(arg)->OnNetworkEvent(NetworkEvent::Disconnected);
+                break;
+            default:
+                ESP_LOGI(TAG, "IOT_ETH_EVENT_UNKNOWN");
+                break;
         }
     } else if (event_base == IP_EVENT) {
         ESP_LOGI(TAG, "GOT_IP");
         xEventGroupSetBits(static_cast<RndisBoard*>(arg)->s_event_group, EVENT_GOT_IP_BIT);
     }
 }
- 
 
 void RndisBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
     switch (event) {
@@ -115,17 +110,17 @@ void RndisBoard::SetNetworkEventCallback(NetworkEventCallback callback) {
     network_event_callback_ = std::move(callback);
 }
 
-void RndisBoard::install_rndis(uint16_t idVendor, uint16_t idProduct, const char *netif_name)
-{
+void RndisBoard::install_rndis(uint16_t idVendor, uint16_t idProduct, const char* netif_name) {
     esp_err_t ret = ESP_OK;
     iot_eth_handle_t eth_handle = nullptr;
     iot_eth_netif_glue_handle_t glue = nullptr;
 
-    usb_device_match_id_t *dev_match_id = (usb_device_match_id_t*)calloc(2, sizeof(usb_device_match_id_t));
+    usb_device_match_id_t* dev_match_id =
+        (usb_device_match_id_t*)calloc(2, sizeof(usb_device_match_id_t));
     dev_match_id[0].match_flags = USB_DEVICE_ID_MATCH_VID_PID;
     dev_match_id[0].idVendor = idVendor;
     dev_match_id[0].idProduct = idProduct;
-    memset(&dev_match_id[1], 0, sizeof(usb_device_match_id_t)); // end of list
+    memset(&dev_match_id[1], 0, sizeof(usb_device_match_id_t));  // end of list
     iot_usbh_rndis_config_t rndis_cfg = {
         .match_id_list = dev_match_id,
     };
@@ -168,19 +163,15 @@ void RndisBoard::install_rndis(uint16_t idVendor, uint16_t idProduct, const char
     esp_netif_attach(s_rndis_netif, glue);
     iot_eth_start(eth_handle);
 }
- 
 
 NetworkInterface* RndisBoard::GetNetwork() {
     static EspNetwork network;
     return &network;
 }
 
-const char* RndisBoard::GetNetworkStateIcon() {
-    return MATERIAL_SYMBOLS_ANDROID_CELL_4_BAR;
-}
+const char* RndisBoard::GetNetworkStateIcon() { return MATERIAL_SYMBOLS_ANDROID_CELL_4_BAR; }
 
 std::string RndisBoard::GetBoardJson() {
- 
     std::string json = R"({"type":")" + std::string(BOARD_TYPE) + R"(",)";
     json += R"("name":")" + std::string(BOARD_NAME) + R"(",)";
 
@@ -188,9 +179,7 @@ std::string RndisBoard::GetBoardJson() {
     return json;
 }
 
-void RndisBoard::SetPowerSaveLevel(PowerSaveLevel level) {
- 
-}
+void RndisBoard::SetPowerSaveLevel(PowerSaveLevel level) {}
 
 std::string RndisBoard::GetDeviceStatusJson() {
     auto& board = Board::GetInstance();
@@ -244,4 +233,4 @@ std::string RndisBoard::GetDeviceStatusJson() {
     cJSON_Delete(root);
     return result;
 }
-#endif // CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3
+#endif  // CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3

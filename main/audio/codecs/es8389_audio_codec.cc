@@ -6,10 +6,10 @@ static const char TAG[] = "Es8389AudioCodec";
 
 Es8389AudioCodec::Es8389AudioCodec(void* i2c_master_handle, i2c_port_t i2c_port, int input_sample_rate, int output_sample_rate,
     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
-    gpio_num_t pa_pin, uint8_t es8389_addr, bool use_mclk) {
+    gpio_num_t pa_pin, uint8_t es8389_addr, bool use_mclk, int input_channels) {
     duplex_ = true; // 是否双工
     input_reference_ = false; // 是否使用参考输入，实现回声消除
-    input_channels_ = 1; // 输入通道数
+    input_channels_ = input_channels < 1 ? 1 : input_channels; // 1=单麦, 2=MIC1+MIC2 立体声
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
     input_gain_ = 40;
@@ -150,11 +150,14 @@ void Es8389AudioCodec::EnableInput(bool enable) {
     if (enable) {
         esp_codec_dev_sample_info_t fs = {
             .bits_per_sample = 16,
-            .channel = 1,
+            .channel = (uint8_t)input_channels_,
             .channel_mask = 0,
             .sample_rate = (uint32_t)input_sample_rate_,
             .mclk_multiple = 0,
         };
+        if (input_channels_ >= 2) {
+            fs.channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0) | ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
+        }
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
         ESP_ERROR_CHECK(esp_codec_dev_set_in_gain(input_dev_, input_gain_));
     } else {

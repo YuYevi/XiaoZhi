@@ -15,17 +15,6 @@ set(SOURCES "audio/audio_codec.cc"
             "led/gpio_led.cc"
             "display/display.cc"
             "display/text_glyph.cc"
-            "display/lcd_display.cc"
-            "display/oled_display.cc"
-            "display/lvgl_display/lvgl_display.cc"
-            "display/emote_display.cc"
-            "display/lvgl_display/emoji_collection.cc"
-            "display/lvgl_display/lvgl_theme.cc"
-            "display/lvgl_display/lvgl_font.cc"
-            "display/lvgl_display/dynamic_glyph_cache.cc"
-            "display/lvgl_display/lvgl_image.cc"
-            "display/lvgl_display/gif/lvgl_gif.cc"
-            "display/lvgl_display/gif/gifdec.c"
             "display/lvgl_display/jpg/image_to_jpeg.cpp"
             "display/lvgl_display/jpg/jpeg_to_image.c"
             "protocols/protocol.cc"
@@ -41,6 +30,22 @@ set(SOURCES "audio/audio_codec.cc"
             "assets.cc"
             "main.cc"
             )
+
+if(CONFIG_USE_LVGL)
+    list(APPEND SOURCES
+        "display/lcd_display.cc"
+        "display/oled_display.cc"
+        "display/lvgl_display/lvgl_display.cc"
+        "display/emote_display.cc"
+        "display/lvgl_display/emoji_collection.cc"
+        "display/lvgl_display/lvgl_theme.cc"
+        "display/lvgl_display/lvgl_font.cc"
+        "display/lvgl_display/dynamic_glyph_cache.cc"
+        "display/lvgl_display/lvgl_image.cc"
+        "display/lvgl_display/gif/lvgl_gif.cc"
+        "display/lvgl_display/gif/gifdec.c"
+    )
+endif()
 
 set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
 
@@ -427,6 +432,10 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
     set(BUILTIN_ICON_FONT font_material_symbols_16_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+elseif(CONFIG_BOARD_TYPE_AI_DUAL_EYED_DOLL)
+    set(BOARD_TYPE "AI-dual-eyed-doll")
+    set(BUILTIN_TEXT_FONT "")
+    set(BUILTIN_ICON_FONT "")
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_46)
     set(MANUFACTURER "waveshare")
     set(BOARD_TYPE "esp32-s3-touch-lcd-1.46")
@@ -883,6 +892,14 @@ else()
 endif()
 list(APPEND SOURCES ${BOARD_SOURCES})
 
+set(BOARD_EMBED_FILES "")
+if(CONFIG_BOARD_TYPE_AI_DUAL_EYED_DOLL)
+    file(GLOB BOARD_EMBED_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/assets/*.rgb565.z"
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/assets/*.ogg"
+    )
+endif()
+
 # Select one audio engine for each chip family
 if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
     list(APPEND SOURCES "audio/engines/afe_audio_engine.cc")
@@ -1049,8 +1066,11 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT AND IDF_VERSION_MAJOR LESS 6)
         espressif__touch_button_sensor
     )
 endif()
+if(CONFIG_USE_LVGL)
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA xiaozhi-fonts)
+endif()
 idf_component_register(SRCS ${SOURCES}
-                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${BOARD_EMBED_FILES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES
@@ -1075,7 +1095,6 @@ idf_component_register(SRCS ${SOURCES}
                         efuse
                         bt
                         fatfs
-                        xiaozhi-fonts
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
 
@@ -1084,17 +1103,25 @@ idf_component_register(SRCS ${SOURCES}
 if(NOT BOARD_NAME)
     set(BOARD_NAME ${BOARD_TYPE})
 endif()
-string(REGEX MATCH "^font_noto_sans_basic_([0-9]+)_([0-9]+)$" _font_match "${BUILTIN_TEXT_FONT}")
-if(NOT _font_match)
-    message(FATAL_ERROR "Unsupported built-in text font name: ${BUILTIN_TEXT_FONT}")
+set(MAIN_COMPILE_DEFINITIONS
+    BOARD_TYPE=\"${BOARD_TYPE}\"
+    BOARD_NAME=\"${BOARD_NAME}\"
+)
+if(CONFIG_USE_LVGL AND BUILTIN_TEXT_FONT)
+    string(REGEX MATCH "^font_noto_sans_basic_([0-9]+)_([0-9]+)$" _font_match "${BUILTIN_TEXT_FONT}")
+    if(NOT _font_match)
+        message(FATAL_ERROR "Unsupported built-in text font name: ${BUILTIN_TEXT_FONT}")
+    endif()
+    set(TEXT_FONT_SIZE "${CMAKE_MATCH_1}")
+    set(TEXT_FONT_BPP "${CMAKE_MATCH_2}")
+    list(APPEND MAIN_COMPILE_DEFINITIONS
+        BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT}
+        BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
+        TEXT_FONT_SIZE=${TEXT_FONT_SIZE}
+        TEXT_FONT_BPP=${TEXT_FONT_BPP}
+    )
 endif()
-set(TEXT_FONT_SIZE "${CMAKE_MATCH_1}")
-set(TEXT_FONT_BPP "${CMAKE_MATCH_2}")
-target_compile_definitions(${COMPONENT_LIB}
-                    PRIVATE BOARD_TYPE=\"${BOARD_TYPE}\" BOARD_NAME=\"${BOARD_NAME}\"
-                    PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
-                    PRIVATE TEXT_FONT_SIZE=${TEXT_FONT_SIZE} TEXT_FONT_BPP=${TEXT_FONT_BPP}
-                    )
+target_compile_definitions(${COMPONENT_LIB} PRIVATE ${MAIN_COMPILE_DEFINITIONS})
 
 # Add generation rules
 add_custom_command(

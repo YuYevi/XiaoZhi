@@ -1,12 +1,12 @@
 #ifndef DISPLAY_H
 #define DISPLAY_H
 
-#include "emoji_collection.h"
 #include "text_glyph.h"
 
-#ifndef CONFIG_USE_EMOTE_MESSAGE_STYLE
+#if CONFIG_USE_LVGL && !defined(CONFIG_USE_EMOTE_MESSAGE_STYLE)
 #define HAVE_LVGL 1
 #include <lvgl.h>
+#include "emoji_collection.h"
 #endif
 
 #include <esp_log.h>
@@ -15,6 +15,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -46,7 +47,9 @@ public:
     virtual void SetPowerSaveMode(bool on);
     virtual bool AddTextGlyphs(const std::vector<TextGlyph>& glyphs, uint8_t bpp) { return false; }
     virtual void ClearTextGlyphs() {}
+#ifdef HAVE_LVGL
     virtual void SetEmojiCollection(std::shared_ptr<EmojiCollection>) {}
+#endif
     virtual void SetupUI() { setup_ui_called_ = true; }
 
     inline int width() const { return width_; }

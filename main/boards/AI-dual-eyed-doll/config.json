@@ -1,0 +1,12 @@
+{
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "AI-dual-eyed-doll",
+            "sdkconfig_append": [
+                "CONFIG_FLASH_NONE_ASSETS=y",
+                "CONFIG_USE_LVGL=n"
+            ]
+        }
+    ]
+}
