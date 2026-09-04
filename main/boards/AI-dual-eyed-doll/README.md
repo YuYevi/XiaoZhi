@@ -4,10 +4,10 @@ Custom dual-eye firmware based on XiaoZhi voice conversation. Hardware is **not*
 
 ## Hardware
 
-- ESP32-S3R8, ES8390 codec (ES8389 driver), LM4890 speaker amp
+- ESP32-S3R8, **4MB flash**, ES8390 codec (ES8389 driver), LM4890 speaker amp
 - Two 0.71" GC9D01N 160x160 SPI panels (shared SCLK/MOSI/DC/RST, separate CS)
 - Left eye: CS GPIO12. Right eye: CS GPIO13, hardware-mirrored so both screens share one RGB565 asset
-- In-tree `esp_lcd_gc9d01n` driver (same as LilyGo T-Circle) plus the BOE init sequence from the panel vendor
+- Official `espressif/esp_lcd_gc9d01` panel driver plus the vendor init sequence used by the working dual-eye firmware
 - PA_SD on GPIO18 (KEY_2 removed; R44 DNP). GPIO35 is left to octal PSRAM
 - Touch_out3 / Touch_out4 are not enabled (GPIO36/37 are PSRAM pins)
 
@@ -28,6 +28,8 @@ Wake-word conversation and the original no-SSID boot provisioning path are uncha
 ES8390 is driven with the shared ES8389 codec. Both analog mics are opened as stereo input (`AUDIO_INPUT_CHANNELS 2`).
 
 ## Build
+
+Flash is 4MB (`CONFIG_ESPTOOLPY_FLASHSIZE_4MB`, `partitions/v2/4m.csv`): factory app `0x2F0000` (~3MB) plus a 1MB `assets` slot. This board already uses `CONFIG_FLASH_NONE_ASSETS`, so the assets partition is left empty. Dual-bank OTA does not fit on 4MB, so app rollback is disabled. Flash and octal PSRAM run at 40MHz in DIO, with WiFi IRAM options, to avoid cache MMU faults on this 4MB module.
 
 ```sh
 python3 scripts/release.py AI-dual-eyed-doll

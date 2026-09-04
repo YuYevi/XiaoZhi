@@ -47,6 +47,45 @@ static const EyeAsset kEyeAssets[] = {
     {"shocked", shocked_rgb565_z_start, shocked_rgb565_z_end},
 };
 
+static bool DecompressEyeAsset(const EyeAsset& asset, uint16_t* dest) {
+    // tinfl_decompress_mem_to_mem() keeps tinfl_decompressor on the caller's stack (~4KB+).
+    // Board init runs on the 8KB main task, so that overflows and reboots with StoreProhibited.
+    auto* decomp = static_cast<tinfl_decompressor*>(
+        heap_caps_malloc(sizeof(tinfl_decompressor), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (decomp == nullptr) {
+        decomp = static_cast<tinfl_decompressor*>(malloc(sizeof(tinfl_decompressor)));
+    }
+    if (decomp == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate zlib decompressor");
+        return false;
+    }
+
+    tinfl_init(decomp);
+    size_t src_len = static_cast<size_t>(asset.end - asset.start);
+    size_t dest_len = EYE_BYTES;
+    tinfl_status status = tinfl_decompress(
+        decomp, asset.start, &src_len, reinterpret_cast<mz_uint8*>(dest),
+        reinterpret_cast<mz_uint8*>(dest), &dest_len,
+        TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    heap_caps_free(decomp);
+
+    if (status != TINFL_STATUS_DONE || dest_len != EYE_BYTES) {
+        ESP_LOGE(TAG, "Decompress %s failed: status=%d len=%u", asset.name, static_cast<int>(status),
+                 static_cast<unsigned>(dest_len));
+        return false;
+    }
+
+    // Packed RGB565 assets are little-endian. GC9D01 expects the high byte first
+    // on SPI, so swap each pixel before handing the buffer to esp_lcd.
+    auto* bytes = reinterpret_cast<uint8_t*>(dest);
+    for (size_t i = 0; i < EYE_BYTES; i += sizeof(uint16_t)) {
+        const uint8_t high = bytes[i];
+        bytes[i] = bytes[i + 1];
+        bytes[i + 1] = high;
+    }
+    return true;
+}
+
 DualEyeDisplay::DualEyeDisplay(esp_lcd_panel_io_handle_t left_io, esp_lcd_panel_handle_t left_panel,
                                esp_lcd_panel_io_handle_t right_io, esp_lcd_panel_handle_t right_panel)
     : left_panel_(left_panel), right_panel_(right_panel) {
@@ -163,11 +202,7 @@ bool DualEyeDisplay::DrawEmotion(const char* emotion) {
         return false;
     }
 
-    size_t dest_len = tinfl_decompress_mem_to_mem(
-        frame_, EYE_BYTES, asset->start, static_cast<size_t>(asset->end - asset->start),
-        TINFL_FLAG_PARSE_ZLIB_HEADER);
-    if (dest_len == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED || dest_len != EYE_BYTES) {
-        ESP_LOGE(TAG, "Decompress %s failed: len=%u", mapped, static_cast<unsigned>(dest_len));
+    if (!DecompressEyeAsset(*asset, frame_)) {
         return false;
     }
 
