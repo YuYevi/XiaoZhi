@@ -8,10 +8,13 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_log.h>
 #include <esp_sleep.h>
+#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <string_view>
 #include <wifi_manager.h>
+#include <atomic>
+#include <string_view>
+#include <utility>
 
 #include "adc_battery_monitor.h"
 #include "application.h"
@@ -59,7 +62,8 @@ static const gc9d01_lcd_init_cmd_t kGc9d01InitCommands[] = {
     {0x6C, (const uint8_t[]){0x22, 0x02, 0x22, 0x02, 0x22, 0x22, 0x50}, 7, 0},
     {0x6E, (const uint8_t[]){0x03, 0x03, 0x01, 0x01, 0x00, 0x00, 0x0F, 0x0F, 0x0D, 0x0D, 0x0B,
                              0x0B, 0x09, 0x09, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x0A, 0x0C, 0x0C,
-                             0x0E, 0x0E, 0x10, 0x10, 0x00, 0x00, 0x02, 0x02, 0x04, 0x04}, 32, 0},
+                             0x0E, 0x0E, 0x10, 0x10, 0x00, 0x00, 0x02, 0x02, 0x04, 0x04},
+     32, 0},
     {0xBF, (const uint8_t[]){0x01}, 1, 0},
     {0xF9, (const uint8_t[]){0x40}, 1, 0},
     {0x9B, (const uint8_t[]){0x3B}, 1, 0},
@@ -92,6 +96,63 @@ private:
     Button touch2_button_;
     bool screen_on_ = true;
     bool power_button_released_ = false;
+    std::atomic<bool> ap_radio_task_running_{false};
+
+    static void ApRadioDiagnosticTask(void* arg) {
+        auto* board = static_cast<AiDualEyedDollBoard*>(arg);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        wifi_mode_t mode = WIFI_MODE_NULL;
+        wifi_config_t ap_config = {};
+        uint8_t primary_channel = 0;
+        wifi_second_chan_t secondary_channel = WIFI_SECOND_CHAN_NONE;
+        int8_t max_tx_power = 0;
+
+        esp_err_t mode_result = esp_wifi_get_mode(&mode);
+        ESP_LOGI(TAG, "AP radio diagnostic: esp_wifi_get_mode=%s (%d), mode=%d",
+                 esp_err_to_name(mode_result), mode_result,
+                 mode_result == ESP_OK ? mode : WIFI_MODE_NULL);
+
+        esp_err_t config_result = esp_wifi_get_config(WIFI_IF_AP, &ap_config);
+        if (config_result == ESP_OK) {
+            ESP_LOGI(TAG,
+                     "AP radio diagnostic: esp_wifi_get_config=%s (%d), ssid='%.*s', "
+                     "configured_channel=%u, authmode=%d",
+                     esp_err_to_name(config_result), config_result, ap_config.ap.ssid_len,
+                     reinterpret_cast<const char*>(ap_config.ap.ssid), ap_config.ap.channel,
+                     ap_config.ap.authmode);
+        } else {
+            ESP_LOGW(TAG, "AP radio diagnostic: esp_wifi_get_config=%s (%d)",
+                     esp_err_to_name(config_result), config_result);
+        }
+
+        esp_err_t channel_result = esp_wifi_get_channel(&primary_channel, &secondary_channel);
+        ESP_LOGI(TAG, "AP radio diagnostic: esp_wifi_get_channel=%s (%d), primary=%u, secondary=%d",
+                 esp_err_to_name(channel_result), channel_result, primary_channel,
+                 secondary_channel);
+
+        esp_err_t power_result = esp_wifi_get_max_tx_power(&max_tx_power);
+        ESP_LOGI(TAG, "AP radio diagnostic: esp_wifi_get_max_tx_power=%s (%d), power=%d (0.25 dBm)",
+                 esp_err_to_name(power_result), power_result, max_tx_power);
+
+        board->ap_radio_task_running_.store(false);
+        vTaskDelete(nullptr);
+    }
+
+    void StartApRadioDiagnosticTask() {
+        bool expected = false;
+        if (!ap_radio_task_running_.compare_exchange_strong(expected, true)) {
+            ESP_LOGW(TAG, "AP radio diagnostic task is already running");
+            return;
+        }
+
+        BaseType_t result = xTaskCreate(ApRadioDiagnosticTask, "ap_radio_diag", 4096, this,
+                                        tskIDLE_PRIORITY + 1, nullptr);
+        if (result != pdPASS) {
+            ap_radio_task_running_.store(false);
+            ESP_LOGE(TAG, "Failed to create AP radio diagnostic task: %d", result);
+        }
+    }
 
     void HoldPower() {
         rtc_gpio_init(PWR_CONTROL_PIN);
@@ -208,8 +269,8 @@ private:
 
         gc9d01_vendor_config_t vendor_config = {
             .init_cmds = kGc9d01InitCommands,
-            .init_cmds_size = static_cast<uint16_t>(sizeof(kGc9d01InitCommands) /
-                                                    sizeof(kGc9d01InitCommands[0])),
+            .init_cmds_size =
+                static_cast<uint16_t>(sizeof(kGc9d01InitCommands) / sizeof(kGc9d01InitCommands[0])),
         };
         esp_lcd_panel_dev_config_t panel_config = {};
         panel_config.reset_gpio_num = GPIO_NUM_NC;
@@ -273,6 +334,18 @@ public:
         InitializeButtons();
         InitializeBattery();
         GetBacklight()->RestoreBrightness();
+    }
+
+    void SetNetworkEventCallback(NetworkEventCallback callback) override {
+        WifiBoard::SetNetworkEventCallback(
+            [this, callback = std::move(callback)](NetworkEvent event, const std::string& data) {
+                if (callback) {
+                    callback(event, data);
+                }
+                if (event == NetworkEvent::WifiConfigModeEnter) {
+                    StartApRadioDiagnosticTask();
+                }
+            });
     }
 
     virtual AudioCodec* GetAudioCodec() override {
