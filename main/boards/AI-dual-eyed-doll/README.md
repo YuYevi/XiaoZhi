@@ -19,7 +19,7 @@ Eyes only show the eight static expressions under `assets/`. The original 1.85" 
 | --- | --- | --- |
 | Touch 1 | 8 | Happy face + `Short_laugh.ogg` |
 | Touch 2 | 38 | Angry face + `tsundere.ogg` |
-| Power | 2 | Short: screen on/off. Long (~2s): power off (`PWR_CTRL` GPIO1) |
+| Power | 2 | Hold 3s to boot. While running, short: screen on/off; hold 3s: power off (`PWR_CTRL` GPIO1) |
 | KEY 1 | 17 | Short: toggle AI chat. Long: enter/exit WiFi AP config |
 | BOOT | 0 | Unused at runtime (download / reset) |
 
