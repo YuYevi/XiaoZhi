@@ -41,7 +41,9 @@
 
 ## 按键与网络
 
-首次启动默认选择 Wi-Fi，沿用源 BAJI 的默认行为；切换后的网络选择保存在 NVS `network/type` 中，下次启动恢复。4G 模式通过本地 ML307 实现驱动模块，尝试配置 eDRX；实际支持情况由模块固件和网络决定。
+未保存网络选择时默认使用 4G；已有选择保存在 NVS `network/type` 中（`1` 为 4G，`0` 为 Wi-Fi），下次启动恢复。板级直接继承小智原生 `DualNetworkBoard`，由原生 `Ml307Board` 和 `78/esp-ml307` 组件完成模组检测、网络注册及 HTTP/MQTT/WebSocket 通信，使用原生 921600 波特率设置。
+
+BAJI 仅保留 TCA9554 上的模组电源控制：启动原生联网前通过组件自带的 `AtUart` 检查 AT 通信是否可用，按需发送 PWRON 脉冲，避免将型号查询失败误判为关机、在 ESP32 软重启时误关模组。4G 启动时恢复旧固件可能遗留的飞行模式。临时探测对象先释放串口，再启动原生联网；Wi-Fi 模式关闭检测到的模组。
 
 | 操作 | 行为 |
 | --- | --- |
@@ -51,7 +53,7 @@
 | 音量减长按 2 秒 | 静音 |
 | 音量加长按 3 秒 | 显示 Wi-Fi/4G 切换提示；5 秒内再次短按音量加确认 |
 
-网络切换会关闭旧协议和旧网络连接，再建立目标网络。设备正在升级、激活等忙碌状态时会提示稍后切换。切换确认提示显示 2 秒，确认窗口仍为 5 秒。
+网络切换调用原生 `SwitchNetworkType()`，保存网络选择后重启设备，不再执行运行时热切换。设备正在升级、激活等忙碌状态时会提示稍后切换。切换确认提示显示 2 秒，确认窗口仍为 5 秒。
 
 ## 显示与资源
 
@@ -72,7 +74,7 @@ Wi-Fi 和电池继续使用 BAJI 原始位图，4G、静音及系统提示使用
 
 ## 板级结构
 
-共 14 个文件。参照微雪 1.85，同名板级 `.cc` 集中 I2C、TCA9554、QSPI、ST77916 和按键初始化，构造函数按顺序调用 `Initialize*`。正常启动与纯充电使用同一个显示工厂，共用总线和扩展芯片。
+共 13 个文件。参照微雪 1.85，同名板级 `.cc` 集中 I2C、TCA9554、QSPI、ST77916 和按键初始化，构造函数按顺序调用 `Initialize*`。正常启动与纯充电使用同一个显示工厂，共用总线和扩展芯片。
 
 ```text
 baji-touch-1.85lcd-ml307/
@@ -87,13 +89,12 @@ baji-touch-1.85lcd-ml307/
     ├── baji_display.cc
     ├── baji_display.h
     ├── baji_185_status_icons.c
-    ├── baji_ml307.h
     ├── power_boot.cc
     ├── power_manager.cc
     └── power_manager.h
 ```
 
-`config.h` 按微雪的紧凑分组和对齐格式整理；原 BAJI 的 79 个宏完整保留，宏名和值没有替换成微雪参数。原有虚拟 GPIO 宏也保留在配置中，但实际驱动通过扩展芯片位掩码访问对应引脚。
+`config.h` 按微雪的紧凑分组和对齐格式整理；原 BAJI 的 79 个宏完整保留，宏名和值没有替换成微雪参数。原有虚拟 GPIO 宏也保留在配置中，但实际驱动通过扩展芯片位掩码访问对应引脚。原生 `Ml307Board` 不读取 BAJI 的 eDRX 宏，本版本不主动配置 eDRX。
 
 | common 文件 | 职责 |
 | --- | --- |
@@ -101,7 +102,6 @@ baji-touch-1.85lcd-ml307/
 | `baji_display.cc/.h` | 继承原生显示，调整板级布局并提供充电页 |
 | `baji_185_status_icons.c` | BAJI 原始 Wi-Fi 与电池位图 |
 | `baji_audio_codec.cc/.h` | ES8311、扩展 IO 功放使能及 BAJI 输入采样处理 |
-| `baji_ml307.h` | ML307 启停、取消及事件转发；单个头文件内实现 |
 | `power_manager.h` | 电源管理类、回调和共享 RTC 状态接口声明 |
 | `power_manager.cc` | 运行期电量、USB 状态、关机及共享 RTC 标记实现 |
 | `power_boot.cc` | 应用启动前的开机门控、纯充电流程及 `__wrap_app_main` |
@@ -130,8 +130,8 @@ idf.py -B $bajiBuild -DIDF_TARGET=esp32s3 "-DSDKCONFIG=$bajiBuild/sdkconfig" "-D
 
 产物位于 `build/baji-touch-1.85lcd-ml307/`：`xiaozhi.bin` 为应用，`generated_assets.bin` 为原生字体/表情/语音资源，`merged-binary.bin` 为包含引导程序、分区表、OTA 数据、应用和资源的合并镜像，烧录偏移 `0x0`。
 
-2026-09-19 电源文件按职责拆分后已通过 ESP-IDF 5.5.4 / ESP32-S3 编译及合并镜像生成，应用大小 `0x2d5860`（2,971,744 字节），应用分区剩余约 28%。原生构建脚本可识别此板型；原 BAJI 配置宏、ST77916 初始化表以及调整前后的显示、按键、电源和调制解调器逻辑已核对。
+2026-09-20 改用原生 `DualNetworkBoard` 后已通过 ESP-IDF 5.5.4 / ESP32-S3 编译及合并镜像生成，应用大小 `0x2d44a0`（2,966,688 字节），应用分区剩余约 28%。构建日志为同目录 `native-network-build.log`，`native-network-verification.json` 记录固件哈希与合并镜像各分区的核对结果。
 
-本轮电源文件拆分的日志为同目录 `power-split-build.log`；`verification.json` 记录最终固件、分区、资源、入口包装和配置核对结果。拆分前后的函数与接口核对记录在 `build/baji-power-split-review/split-review.json`。显示代码未改动，继续使用 `build/baji-ui-review/native-smoke/` 的验证结果；旧 Puhui 版本的对比报告不代表当前使用原生字体的界面。
+已通过 COM13 烧录并立即采集启动串口，运行中的 ELF 哈希与本次构建一致。原生 `Ml307Board` 以 921600 波特率识别 ML307C，注册网络并取得 PDP IP；但原生 `Ml307Http` 访问小智 HTTPS OTA 服务仍出现 `Connection abnormal disconnection`，设备尚未完成服务器连接，不能将注册成功视为整机联网通过。烧录与串口日志分别为同目录 `native-network-flash.log`、`native-network-serial.log`。
 
-尚未进行真机烧录或功能验证；电源保持、屏幕批次、麦克风、SIM 卡注册、网络切换和节能行为需要在实际硬件上确认。
+本次实机检查覆盖启动与 4G 注册，没有完成 Wi-Fi/4G 按键切换、断电冷启动或语音对话验证。显示、音频与电源实现未作调整；已有显示验证结果位于 `build/baji-ui-review/native-smoke/`。

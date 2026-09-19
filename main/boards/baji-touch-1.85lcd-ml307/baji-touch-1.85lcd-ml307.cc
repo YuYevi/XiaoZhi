@@ -1,17 +1,15 @@
-#include "wifi_board.h"
+#include "dual_network_board.h"
 #include "application.h"
 #include "config.h"
 #include "common/baji_audio_codec.h"
 #include "common/baji_display.h"
-#include "common/baji_ml307.h"
 #include "common/power_manager.h"
 #include "power_save_timer.h"
-#include "settings.h"
 #include "assets/lang_config.h"
 
 #include <iot_button.h>
 #include <button_types.h>
-#include <wifi_manager.h>
+#include <at_uart.h>
 #include <algorithm>
 #include <atomic>
 
@@ -19,6 +17,7 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_st77916.h>
 #include <esp_timer.h>
+#include <esp_log.h>
 #include <esp_io_expander_tca9554.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -343,22 +342,14 @@ uint8_t VolumeDownLevel(button_driver_t*) {
 }
 }
 
-class BajiBoard : public WifiBoard {
+class BajiBoard : public DualNetworkBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_ = nullptr;
-    enum class NetworkMode { Wifi, Ml307 };
-    std::atomic<NetworkMode> network_mode_{NetworkMode::Wifi};
-    std::atomic<bool> switching_{false};
+    bool switching_ = false;
     std::atomic<int64_t> confirm_until_{0};
-    std::atomic<std::shared_ptr<BajiMl307>> modem_;
-    std::atomic<bool> accept_network_events_{false};
-    std::atomic<uint32_t> network_generation_{0};
     BajiDisplay* display_ = nullptr;
     PowerManager* power_ = nullptr;
     PowerSaveTimer* sleep_ = nullptr;
-    NetworkEventCallback callback_;
-    bool modem_powered_ = false;
-    bool prefer_cellular_ = false;
     button_driver_t button_drivers_[3] = {};
     button_handle_t buttons_[3] = {};
 
@@ -382,103 +373,29 @@ private:
     void SetExpander(uint32_t mask, bool high) {
         ESP_ERROR_CHECK(baji_185_set_io_level(mask, high));
     }
-    std::shared_ptr<BajiMl307> CurrentModem() const {
-        return modem_.load();
-    }
-    void ForwardNetworkEvent(NetworkMode source, uint32_t generation, NetworkEvent event, const std::string& data) {
-        if (!accept_network_events_ || network_mode_ != source || network_generation_ != generation) return;
-        Application::GetInstance().Schedule([this, source, generation, event, data]() {
-            if (accept_network_events_ && network_mode_ == source && network_generation_ == generation && callback_) {
-                callback_(event, data);
-            }
-        });
-    }
     void PulseModemPower() {
         SetExpander(BAJI185_IOX_PIN_MASK_4G_PWRON, true);
         vTaskDelay(pdMS_TO_TICKS(2000));
         SetExpander(BAJI185_IOX_PIN_MASK_4G_PWRON, false);
     }
-    void StartCellular() {
+    void InitializeModemPower() {
         SetExpander(BAJI185_IOX_PIN_MASK_4G_RST, true);
-        // A software reset may leave the modem powered. Avoid toggling it off.
-        auto detected = AtModem::Detect(UART_4G_TXD, UART_4G_RXD, UART0_DTR, 115200, 1200);
-        if (!detected) detected = AtModem::Detect(UART_4G_TXD, UART_4G_RXD, UART0_DTR, 921600, 1200);
-        modem_powered_ = detected != nullptr;
-        detected.reset();
-        if (!modem_powered_) {
-            PulseModemPower();
-            vTaskDelay(pdMS_TO_TICKS(1500));
-            modem_powered_ = true;
-        }
-        auto modem = std::make_shared<BajiMl307>(UART_4G_TXD, UART_4G_RXD, UART0_DTR);
-        const auto generation = network_generation_.load();
-        modem->SetNetworkEventCallback([this, generation](NetworkEvent event, const std::string& data) {
-            ForwardNetworkEvent(NetworkMode::Ml307, generation, event, data);
-        });
-        modem_.store(modem);
-        network_mode_ = NetworkMode::Ml307;
-        accept_network_events_ = true;
-        modem->StartNetwork();
-    }
-    void StopCellular() {
-        if (auto modem = CurrentModem()) modem->StopNetwork();
-        if (modem_powered_) {
-            PulseModemPower();
-            vTaskDelay(pdMS_TO_TICKS(500));
-            modem_powered_ = false;
-        }
-        // Select Wi-Fi before releasing the modem queried by status updates.
-        network_mode_ = NetworkMode::Wifi;
-        // Retain the disconnected modem until it can be replaced on the next start.
-    }
-    void StopWifi() {
-        esp_timer_stop(connect_timer_);
-        auto& wifi = WifiManager::GetInstance();
-        wifi.SetEventCallback(nullptr);
-        wifi.StopStation();
-        wifi.StopConfigAp();
-        in_config_mode_ = false;
-    }
-    void RunNetworkChange(NetworkMode target, bool initial) {
-        if (target == NetworkMode::Ml307) {
-            if (!initial) StopWifi();
-            // Close the previous UART before probing it again.
-            auto previous = modem_.exchange({});
-            while (previous && previous.use_count() > 1) vTaskDelay(pdMS_TO_TICKS(20));
-            previous.reset();
-            StartCellular();
-        } else {
-            if (!initial) {
-                StopCellular();
-            } else {
-                auto probe = AtModem::Detect(UART_4G_TXD, UART_4G_RXD, UART0_DTR, 115200, 1200);
-                const bool alive = probe != nullptr;
-                probe.reset();
-                if (alive) PulseModemPower();
+        // PWRKEY toggles the module. Check its state before pulsing after an ESP reset.
+        const bool enable = GetNetworkType() == NetworkType::ML307;
+        bool powered;
+        {
+            AtUart probe(UART_4G_TXD, UART_4G_RXD, UART0_DTR);
+            probe.Initialize();
+            ESP_ERROR_CHECK(probe.IsInitialized() ? ESP_OK : ESP_FAIL);
+            powered = probe.SetBaudRate(921600, 3000);
+            // Restore normal mode if a previous firmware left the module in flight mode.
+            if (powered && enable && !probe.SendCommand("AT+CFUN=1")) {
+                ESP_LOGW("BajiBoard", "Modem did not acknowledge normal mode");
             }
-            network_mode_ = NetworkMode::Wifi;
-            const auto generation = network_generation_.load();
-            WifiBoard::SetNetworkEventCallback([this, generation](NetworkEvent event, const std::string& data) {
-                ForwardNetworkEvent(NetworkMode::Wifi, generation, event, data);
-            });
-            accept_network_events_ = true;
-            WifiBoard::StartNetwork();
-        }
-        switching_ = false;
-    }
-    void LaunchNetworkChange(NetworkMode target, bool initial) {
-        struct Context { BajiBoard* board; NetworkMode target; bool initial; };
-        auto* context = new Context{this, target, initial};
-        if (xTaskCreate([](void* arg) {
-                auto* context = static_cast<Context*>(arg);
-                const auto job = *context;
-                delete context;
-                job.board->RunNetworkChange(job.target, job.initial);
-                vTaskDelete(nullptr);
-            }, "baji_network", 8192, context, 5, nullptr) != pdPASS) {
-            delete context;
-            switching_ = false;
-            display_->ShowNotification("网络切换任务创建失败");
+        } // Release the probe UART before the native Ml307Board starts its own task.
+        if (powered != enable) {
+            PulseModemPower();
+            vTaskDelay(pdMS_TO_TICKS(enable ? 1500 : 500));
         }
     }
     void RequestNetworkSwitch() {
@@ -490,28 +407,7 @@ private:
             return;
         }
         switching_ = true;
-        accept_network_events_ = false;
-        ++network_generation_;
-        const auto target = network_mode_ == NetworkMode::Wifi ? NetworkMode::Ml307 : NetworkMode::Wifi;
-        if (state == kDeviceStateSpeaking) app.AbortSpeaking(kAbortReasonNone);
-        if (state != kDeviceStateStarting && state != kDeviceStateWifiConfiguring) {
-            app.SetDeviceState(kDeviceStateIdle);
-        }
-        // ResetProtocol queues cleanup. Queue the switch behind it on the same
-        // main loop, so no protocol still owns a socket on the old interface.
-        app.ResetProtocol();
-        app.Schedule([this, target]() {
-            Application::GetInstance().Schedule([this, target]() {
-                auto& app = Application::GetInstance();
-                // The current application restarts activation from this supported
-                // state after Connected, rebuilding the protocol for the new network.
-                app.SetDeviceState(kDeviceStateWifiConfiguring);
-                Settings settings("network", true);
-                settings.SetInt("type", target == NetworkMode::Ml307 ? 1 : 0);
-                display_->ShowNotification(target == NetworkMode::Ml307 ? Lang::Strings::SWITCH_TO_4G_NETWORK : Lang::Strings::SWITCH_TO_WIFI_NETWORK);
-                LaunchNetworkChange(target, false);
-            });
-        });
+        SwitchNetworkType();
     }
     void ChangeVolume(int delta) {
         sleep_->WakeUp();
@@ -538,12 +434,9 @@ private:
             Application::GetInstance().Schedule([self]() {
                 self->sleep_->WakeUp();
                 if (self->switching_) return;
-                if (self->network_mode_ == NetworkMode::Ml307) {
-                    if (auto modem = self->CurrentModem()) modem->StartNetwork();
-                }
-                if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting && self->network_mode_ == NetworkMode::Wifi) {
-                    self->EnterWifiConfigMode();
-                } else if (self->network_mode_ == NetworkMode::Ml307 &&
+                if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting && self->GetNetworkType() == NetworkType::WIFI) {
+                    static_cast<WifiBoard&>(self->GetCurrentBoard()).EnterWifiConfigMode();
+                } else if (self->GetNetworkType() == NetworkType::ML307 &&
                            (Application::GetInstance().GetDeviceState() == kDeviceStateStarting ||
                             Application::GetInstance().GetDeviceState() == kDeviceStateWifiConfiguring)) {
                     self->display_->ShowNotification("正在连接4G，请稍候");
@@ -563,7 +456,7 @@ private:
         ESP_ERROR_CHECK(iot_button_register_cb(buttons_[1], BUTTON_LONG_PRESS_START, nullptr, [](void*, void* context) {
             auto* self = static_cast<BajiBoard*>(context);
             self->confirm_until_ = esp_timer_get_time() + 5000000;
-            self->display_->ShowNotification(self->network_mode_ == NetworkMode::Wifi ? "切换4G？短按音量+确认" : "切换WiFi？短按音量+确认", 2000);
+            self->display_->ShowNotification(self->GetNetworkType() == NetworkType::WIFI ? "切换4G？短按音量+确认" : "切换WiFi？短按音量+确认", 2000);
         }, this));
         ESP_ERROR_CHECK(iot_button_register_cb(buttons_[2], BUTTON_SINGLE_CLICK, nullptr, [](void*, void* context) {
             auto* self = static_cast<BajiBoard*>(context);
@@ -597,9 +490,7 @@ private:
     }
 
 public:
-    BajiBoard() {
-        Settings settings("network");
-        prefer_cellular_ = settings.GetInt("type", 1) == 1;
+    BajiBoard() : DualNetworkBoard(UART_4G_TXD, UART_4G_RXD, UART0_DTR, 1) {
         // Complete BAJI's power-on gate before initializing screen and audio.
         power_ = new PowerManager(POWER_USB_IN);
         InitializeI2c();
@@ -638,37 +529,12 @@ public:
         // Application calls this after board and display initialization completes.
         power_->Start();
         sleep_->SetEnabled(power_->IsDischarging());
-        switching_ = true;
-        LaunchNetworkChange(prefer_cellular_ ? NetworkMode::Ml307 : NetworkMode::Wifi, true);
-    }
-    void SetNetworkEventCallback(NetworkEventCallback callback) override {
-        callback_ = std::move(callback);
-
-    }
-    NetworkInterface* GetNetwork() override {
-        auto modem = CurrentModem();
-        return network_mode_ == NetworkMode::Ml307 && modem ? modem->GetNetwork() : WifiBoard::GetNetwork();
-    }
-    const char* GetNetworkStateIcon() override {
-        auto modem = CurrentModem();
-        return network_mode_ == NetworkMode::Ml307 && modem ? modem->GetNetworkStateIcon() : WifiBoard::GetNetworkStateIcon();
-    }
-    std::string GetBoardType() override {
-        return network_mode_ == NetworkMode::Ml307 ? "ml307" : "wifi";
-    }
-    std::string GetBoardJson() override {
-        auto modem = CurrentModem();
-        return network_mode_ == NetworkMode::Ml307 && modem ? modem->GetBoardJson() : WifiBoard::GetBoardJson();
-    }
-    std::string GetDeviceStatusJson() override {
-        auto modem = CurrentModem();
-        return network_mode_ == NetworkMode::Ml307 && modem ? modem->GetDeviceStatusJson() : WifiBoard::GetDeviceStatusJson();
+        InitializeModemPower();
+        DualNetworkBoard::StartNetwork();
     }
     void SetPowerSaveLevel(PowerSaveLevel level) override {
         if (level != PowerSaveLevel::LOW_POWER) sleep_->WakeUp();
-        auto modem = CurrentModem();
-        if (network_mode_ == NetworkMode::Ml307 && modem) modem->SetPowerSaveLevel(level);
-        else WifiBoard::SetPowerSaveLevel(level);
+        DualNetworkBoard::SetPowerSaveLevel(level);
     }
 };
 
