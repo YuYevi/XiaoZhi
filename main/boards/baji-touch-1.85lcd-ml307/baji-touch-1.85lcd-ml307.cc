@@ -490,13 +490,14 @@ private:
     }
 
 public:
-    BajiBoard() : DualNetworkBoard(UART_4G_TXD, UART_4G_RXD, UART0_DTR, 1) {
+    BajiBoard() : DualNetworkBoard(UART_4G_TXD, UART_4G_RXD, UART0_DTR, 0) {
         // Complete BAJI's power-on gate before initializing screen and audio.
         power_ = new PowerManager(POWER_USB_IN);
         InitializeI2c();
         InitializeTca9554();
         InitializeSpi();
         InitializeSt77916Display();
+        display_->InitializeTouch(i2c_bus_);
         InitializePowerSaveTimer();
         InitializeButtons();
         GetBacklight()->RestoreBrightness();

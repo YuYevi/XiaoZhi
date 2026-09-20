@@ -3,8 +3,11 @@
 #include "application.h"
 #include "assets/lang_config.h"
 #include "board.h"
+#include "../config.h"
 #include "lvgl_theme.h"
 
+#include <esp_lcd_touch_cst816s.h>
+#include <esp_lvgl_port.h>
 #include <material_symbols.h>
 #include <algorithm>
 #include <cstring>
@@ -70,6 +73,49 @@ BajiDisplay::BajiDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
         lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     }
+}
+
+BajiDisplay::~BajiDisplay() {
+    if (touch_indev_) lvgl_port_remove_touch(touch_indev_);
+    if (touch_) esp_lcd_touch_del(touch_);
+    if (touch_io_) esp_lcd_panel_io_del(touch_io_);
+}
+
+void BajiDisplay::InitializeTouch(i2c_master_bus_handle_t i2c_bus) {
+    if (touch_indev_) return;
+
+    esp_lcd_panel_io_i2c_config_t io_config = {};
+    io_config.dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS;
+    io_config.scl_speed_hz = 100000;
+    io_config.control_phase_bytes = 1;
+    io_config.lcd_cmd_bits = 8;
+    io_config.flags.disable_control_phase = 1;
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(i2c_bus, &io_config, &touch_io_));
+    const esp_lcd_touch_config_t touch_config = {
+        .x_max = DISPLAY_WIDTH - 1,
+        .y_max = DISPLAY_HEIGHT - 1,
+        // The shared reset was already pulsed before LCD initialization.
+        .rst_gpio_num = TOUCH_RST_GPIO,
+        .int_gpio_num = TOUCH_INT_GPIO,
+        .levels = {
+            .reset = 0,
+            .interrupt = 0,
+        },
+        .flags = {
+            .swap_xy = DISPLAY_SWAP_XY,
+            .mirror_x = DISPLAY_MIRROR_X,
+            .mirror_y = DISPLAY_MIRROR_Y,
+        },
+    };
+    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_cst816s(touch_io_, &touch_config, &touch_));
+    ESP_ERROR_CHECK(gpio_set_pull_mode(TOUCH_INT_GPIO, GPIO_PULLUP_ONLY));
+    const lvgl_port_touch_cfg_t touch_cfg = {
+        .disp = display_,
+        .handle = touch_,
+    };
+    touch_indev_ = lvgl_port_add_touch(&touch_cfg);
+    ESP_ERROR_CHECK(touch_indev_ ? ESP_OK : ESP_FAIL);
+    ESP_LOGI("BajiDisplay", "CST836U touch registered: I2C 0x15, INT GPIO%d", TOUCH_INT_GPIO);
 }
 
 void BajiDisplay::SetupUI() {

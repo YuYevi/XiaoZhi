@@ -58,8 +58,8 @@
 
 #define DISPLAY_WIDTH    360
 #define DISPLAY_HEIGHT   360
-#define DISPLAY_MIRROR_X false
-#define DISPLAY_MIRROR_Y false
+#define DISPLAY_MIRROR_X true
+#define DISPLAY_MIRROR_Y true
 #define DISPLAY_SWAP_XY  false
 
 #define QSPI_LCD_H_RES         (360)
@@ -78,6 +78,10 @@
 
 #define DISPLAY_OFFSET_X 0
 #define DISPLAY_OFFSET_Y 0
+
+// CST836U shares the codec I2C bus (GPIO6/7) and LCD reset (TCA9554 P7).
+#define TOUCH_INT_GPIO GPIO_NUM_17
+#define TOUCH_RST_GPIO GPIO_NUM_NC
 
 #define DISPLAY_BACKLIGHT_PIN           QSPI_PIN_NUM_LCD_BL
 #define DISPLAY_BACKLIGHT_OUTPUT_INVERT false
