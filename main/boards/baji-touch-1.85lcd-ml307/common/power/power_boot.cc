@@ -1,6 +1,6 @@
 #include "power_manager.h"
-#include "../config.h"
-#include "baji_display.h"
+#include "config.h"
+#include "hardware/baji_display.h"
 #include "backlight.h"
 
 #include <driver/gpio.h>

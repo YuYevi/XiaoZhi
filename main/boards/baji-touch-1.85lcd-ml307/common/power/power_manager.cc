@@ -1,5 +1,5 @@
 #include "power_manager.h"
-#include "../config.h"
+#include "config.h"
 #include "board.h"
 
 #include <utility>
@@ -34,16 +34,19 @@ extern "C" bool charging_rtc_usb_shutdown_next_boot(void)
 }
 
 void PowerManager::PowrSwitch() {
+    PollPowerKey(POWER_KEY_PRESSED(), esp_timer_get_time());
+}
+
+void PowerManager::PollPowerKey(bool pressed, int64_t now) {
     if (emergency_shutdown_) {
         // A failed task allocation must not block the shared ESP timer
         // task while the user still holds the power button.
-        if (POWER_KEY_PRESSED()) {
-            shutdown_release_debounce_ticks_ = 0;
+        if (pressed) {
+            shutdown_released_since_ = 0;
             return;
         }
-        if (++shutdown_release_debounce_ticks_ < POWER_SHUTDOWN_RELEASE_DEBOUNCE_TICKS) {
-            return;
-        }
+        if (!shutdown_released_since_) shutdown_released_since_ = now;
+        if (now - shutdown_released_since_ < POWER_KEY_STABLE_RELEASE_MS * 1000) return;
         esp_timer_stop(power_timer_handle_);
         const auto err = esp_sleep_enable_ext1_wakeup(1ULL << Power_Dec, ESP_EXT1_WAKEUP_ANY_LOW);
         if (err != ESP_OK) {
@@ -51,27 +54,36 @@ void PowerManager::PowrSwitch() {
         }
         esp_deep_sleep_start();
     }
-    if (shutdown_requested_) {
+    if (pressed != key_raw_pressed_) {
+        key_raw_pressed_ = pressed;
+        key_raw_since_ = now;
+    }
+    // A press used to pass the three-second boot gate is not a new gesture.
+    if (key_wait_release_) {
+        if (!pressed && now - key_raw_since_ >= POWER_KEY_STABLE_RELEASE_MS * 1000) {
+            key_wait_release_ = false;
+            key_pressed_ = false;
+        }
         return;
     }
-
-    if (POWER_KEY_PRESSED()) {
-        shutdown_release_debounce_ticks_ = 0;
-        hold_shutdown_ticks_++;
-        if (hold_shutdown_ticks_ >= POWER_SHUTDOWN_HOLD_TICKS) {
-            if (timer_handle_) {
-                esp_timer_stop(timer_handle_);
-                esp_timer_delete(timer_handle_);
-                timer_handle_ = nullptr;
-            }
-            shutdown_requested_ = true;
-            shutdown();
+    constexpr int64_t kDebounceUs = 40000;
+    if (pressed != key_pressed_ && now - key_raw_since_ >= kDebounceUs) {
+        key_pressed_ = pressed;
+        if (pressed) {
+            key_pressed_since_ = key_raw_since_;
+            key_menu_sent_ = false;
+        } else if (!key_menu_sent_ && key_raw_since_ - key_pressed_since_ <= 800000) {
+            if (!shutdown_requested_ && on_power_key_) on_power_key_(PowerKeyEvent::Tap);
         }
-    } else {
-        shutdown_release_debounce_ticks_++;
-        if (shutdown_release_debounce_ticks_ >= POWER_SHUTDOWN_RELEASE_DEBOUNCE_TICKS) {
-            hold_shutdown_ticks_ = 0;
-        }
+    }
+    if (!key_pressed_ || !pressed) return;
+    const int64_t held = now - key_pressed_since_;
+    if (held >= 8000000) {
+        // Force-off must work even if the application task or UI is blocked.
+        BeginEmergencyShutdown();
+    } else if (held >= 3000000 && !key_menu_sent_ && !shutdown_requested_) {
+        key_menu_sent_ = true;
+        if (on_power_key_) on_power_key_(PowerKeyEvent::LongPress);
     }
 }
 
@@ -180,7 +192,7 @@ void PowerManager::BeginEmergencyShutdown() {
     // allocation and delays when the shared timer task is the caller.
     emergency_shutdown_ = true;
     shutdown_requested_ = true;
-    shutdown_release_debounce_ticks_ = 0;
+    shutdown_released_since_ = 0;
     if (timer_handle_) {
         esp_timer_stop(timer_handle_);
     }
@@ -189,7 +201,7 @@ void PowerManager::BeginEmergencyShutdown() {
     gpio_set_level(DISPLAY_BACKLIGHT_PIN, 0);
     gpio_set_level(Power_Control, 0);
     if (!esp_timer_is_active(power_timer_handle_)) {
-        esp_timer_start_periodic(power_timer_handle_, 200000);
+        esp_timer_start_periodic(power_timer_handle_, 20000);
     }
 }
 
@@ -198,7 +210,8 @@ void PowerManager::RunShutdownSequence() {
     if (on_power_ui_) {
         on_power_ui_(PowerUiHint::ShuttingDown);
     }
-    vTaskDelay(pdMS_TO_TICKS(500));
+    // Match the prototype's normal shutdown transition; force-off bypasses it.
+    vTaskDelay(pdMS_TO_TICKS(1700));
 
     if (power_timer_handle_) {
         esp_timer_stop(power_timer_handle_);
@@ -225,10 +238,11 @@ void PowerManager::RunShutdownSequence() {
 
     vTaskDelay(pdMS_TO_TICKS(200));
 
-    while (POWER_KEY_PRESSED()) {
-        vTaskDelay(pdMS_TO_TICKS(50));
+    int released_ms = 0;
+    while (released_ms < POWER_KEY_STABLE_RELEASE_MS) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        released_ms = POWER_KEY_PRESSED() ? 0 : released_ms + 20;
     }
-    vTaskDelay(pdMS_TO_TICKS(50));
 
     esp_err_t err = esp_sleep_enable_ext1_wakeup((1ULL << Power_Dec), ESP_EXT1_WAKEUP_ANY_LOW);
     if (err != ESP_OK) {
@@ -336,7 +350,10 @@ PowerManager::PowerManager(gpio_num_t pin) : charging_pin_(pin) {
 
 void PowerManager::Start() {
     CheckBatteryStatus();
-    ESP_ERROR_CHECK(esp_timer_start_periodic(power_timer_handle_, 200000));
+    key_raw_pressed_ = key_pressed_ = POWER_KEY_PRESSED();
+    key_raw_since_ = esp_timer_get_time();
+    key_wait_release_ = true;
+    ESP_ERROR_CHECK(esp_timer_start_periodic(power_timer_handle_, 20000));
     ESP_ERROR_CHECK(esp_timer_start_periodic(timer_handle_, 1000000));
 }
 
@@ -383,11 +400,12 @@ void PowerManager::OnPowerUi(std::function<void(PowerUiHint)> callback) {
     on_power_ui_ = std::move(callback);
 }
 
+void PowerManager::OnPowerKey(std::function<void(PowerKeyEvent)> callback) {
+    on_power_key_ = std::move(callback);
+}
+
 void PowerManager::shutdown() {
-    if (!shutdown_first_) {
-        return;
-    }
-    shutdown_first_ = false;
+    if (shutdown_requested_.exchange(true)) return;
     BaseType_t ok = xTaskCreate(ShutdownTask, "pm_shutdown", 4096, this, tskIDLE_PRIORITY + 5, nullptr);
     if (ok != pdPASS) {
         BeginEmergencyShutdown();

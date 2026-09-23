@@ -25,6 +25,8 @@ public:
     ~BajiAudioCodec() override;
 
     void SetOutputVolume(int volume) override;
+    // Temporary reminder volume; -1 restores media volume without writing NVS.
+    void SetAlertVolume(int volume);
     void SetInputGain(float gain) override;
     void EnableInput(bool enable) override;
     void EnableOutput(bool enable) override;
@@ -37,6 +39,7 @@ private:
     esp_codec_dev_handle_t dev_ = nullptr;
     std::function<void(bool)> set_pa_enabled_;
     std::mutex data_if_mutex_;
+    int alert_volume_ = -1;
     std::vector<int32_t> input_buffer_;
     std::vector<int32_t> output_buffer_;
 

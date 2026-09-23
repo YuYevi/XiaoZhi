@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <functional>
 #include <vector>
 
@@ -16,6 +17,8 @@ extern "C" bool charging_rtc_usb_shutdown_next_boot(void);
 enum class PowerUiHint {
     ShuttingDown,
 };
+
+enum class PowerKeyEvent { Tap, LongPress };
 
 class PowerManager {
 private:
@@ -35,16 +38,22 @@ private:
     const int kBatteryAdcDataCount = 3;
     const int kLowBatteryLevel = 20;
 
-    int hold_shutdown_ticks_ = 0;
-    int shutdown_release_debounce_ticks_ = 0;
+    bool key_raw_pressed_ = false;
+    bool key_pressed_ = false;
+    bool key_wait_release_ = true;
+    bool key_menu_sent_ = false;
+    int64_t key_raw_since_ = 0;
+    int64_t key_pressed_since_ = 0;
+    int64_t shutdown_released_since_ = 0;
     bool new_charging_status = false;
-    bool shutdown_requested_ = false;
-    bool shutdown_first_ = true;
-    bool emergency_shutdown_ = false;
+    std::atomic<bool> shutdown_requested_{false};
+    std::atomic<bool> emergency_shutdown_{false};
 
     std::function<void(PowerUiHint)> on_power_ui_;
+    std::function<void(PowerKeyEvent)> on_power_key_;
 
     void PowrSwitch();
+    void PollPowerKey(bool pressed, int64_t now);
     void CheckBatteryStatus();
     void ReadBatteryAdcData();
     static void ShutdownTask(void* arg);
@@ -62,5 +71,6 @@ public:
     void OnLowBatteryStatusChanged(std::function<void(bool)> callback);
     void OnChargingStatusChanged(std::function<void(bool)> callback);
     void OnPowerUi(std::function<void(PowerUiHint)> callback);
+    void OnPowerKey(std::function<void(PowerKeyEvent)> callback);
     void shutdown();
 };

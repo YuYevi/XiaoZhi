@@ -1,5 +1,5 @@
 #include "baji_audio_codec.h"
-#include "../config.h"
+#include "config.h"
 
 #include <esp_log.h>
 #include <freertos/task.h>
@@ -134,7 +134,7 @@ void BajiAudioCodec::UpdateDeviceState() {
 #if !AUDIO_INPUT_USE_SILICON_MIC
         ESP_ERROR_CHECK(esp_codec_dev_set_in_gain(dev_, input_gain_));
 #endif
-        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));
+        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, alert_volume_ >= 0 ? alert_volume_ : output_volume_));
     } else if (!input_enabled_ && !output_enabled_ && dev_ != nullptr) {
         ESP_ERROR_CHECK(esp_codec_dev_close(dev_));
         esp_codec_dev_delete(dev_);
@@ -187,9 +187,17 @@ void BajiAudioCodec::SetOutputVolume(int volume) {
     std::lock_guard<std::mutex> lock(data_if_mutex_);
     volume = std::clamp(volume, 0, 100);
     if (dev_ != nullptr) {
-        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, volume));
+        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, alert_volume_ >= 0 ? alert_volume_ : volume));
     }
     AudioCodec::SetOutputVolume(volume);
+}
+
+void BajiAudioCodec::SetAlertVolume(int volume) {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    alert_volume_ = volume < 0 ? -1 : std::clamp(volume, 0, 100);
+    if (dev_ != nullptr) {
+        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, alert_volume_ >= 0 ? alert_volume_ : output_volume_));
+    }
 }
 
 void BajiAudioCodec::SetInputGain(float gain) {

@@ -83,6 +83,9 @@
 #define TOUCH_INT_GPIO GPIO_NUM_17
 #define TOUCH_RST_GPIO GPIO_NUM_NC
 
+// Requires the optional Application local-audio ownership extension.
+#define BAJI_WATCH_LOCAL_AUDIO 0
+
 #define DISPLAY_BACKLIGHT_PIN           QSPI_PIN_NUM_LCD_BL
 #define DISPLAY_BACKLIGHT_OUTPUT_INVERT false
 
