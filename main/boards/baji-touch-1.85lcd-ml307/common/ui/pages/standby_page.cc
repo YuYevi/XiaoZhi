@@ -9,6 +9,46 @@
 
 using namespace baji::ui;
 
+namespace {
+// LVGL's RGB565 alpha blend reduces opacity to 32 steps. A full-width
+// vertical mask therefore produces visible horizontal bands over a photo.
+// Compose once while loading, then draw an opaque image on every refresh.
+void PrepareWallpaper(uint8_t* data) {
+    auto* pixels = reinterpret_cast<uint16_t*>(data);
+    constexpr uint32_t denominator = 255 * 255;
+    constexpr uint32_t red = (kBg >> 16) & 255;
+    constexpr uint32_t green = (kBg >> 8) & 255;
+    constexpr uint32_t blue = kBg & 255;
+    for (uint32_t y = 0; y < 360; ++y) {
+        const uint32_t opacity = y < 155 ? 255 - y * 255 / 154
+                                         : y >= 252 ? (y - 252) * 255 / 107 : 0;
+        if (opacity == 0)
+            continue;
+        const uint32_t source_weight = 255 * (255 - opacity);
+        const uint32_t background_red = red * 31 * opacity;
+        const uint32_t background_green = green * 63 * opacity;
+        const uint32_t background_blue = blue * 31 * opacity;
+        for (uint32_t x = 0; x < 360; ++x) {
+            // Fixed spatial noise avoids both row steps and a repeating
+            // dither grid. Share the threshold across RGB to avoid color noise.
+            uint32_t noise = x * 0x1f123bb5u + y * 0x5f356495u + 0x9e3779b9u;
+            noise ^= noise >> 16;
+            noise *= 0x7feb352du;
+            noise ^= noise >> 15;
+            const uint32_t threshold = ((noise & 65535u) * denominator) >> 16;
+            const auto quantize = [threshold](uint32_t numerator) {
+                return numerator / denominator + (numerator % denominator > threshold);
+            };
+            const uint16_t source = pixels[y * 360 + x];
+            const uint32_t r = quantize((source >> 11) * source_weight + background_red);
+            const uint32_t g = quantize(((source >> 5) & 63) * source_weight + background_green);
+            const uint32_t b = quantize((source & 31) * source_weight + background_blue);
+            pixels[y * 360 + x] = static_cast<uint16_t>((r << 11) | (g << 5) | b);
+        }
+    }
+}
+}  // namespace
+
 void WatchUi::LoadWallpapers() {
     if (wallpaper_data_[0] && wallpaper_data_[1] && wallpaper_data_[2])
         return;
@@ -29,12 +69,13 @@ void WatchUi::LoadWallpapers() {
         lv_image_header_t h{};
         std::memcpy(&h, p, sizeof(h));
         if (h.magic != LV_IMAGE_HEADER_MAGIC || h.w != 360 || h.h != 360 ||
-            h.cf != LV_COLOR_FORMAT_RGB565 || s != 259212)
+            h.cf != LV_COLOR_FORMAT_RGB565 || h.stride != 720 || s != 259212)
             continue;
         auto data = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[s - sizeof(h)]);
         if (!data)
             continue;
         std::memcpy(data.get(), static_cast<uint8_t*>(p) + sizeof(h), s - sizeof(h));
+        PrepareWallpaper(data.get());
         wallpapers_[i].header = h;
         wallpapers_[i].data_size = s - sizeof(h);
         wallpapers_[i].data = data.get();
@@ -51,9 +92,7 @@ void WatchUi::RenderStandby() {
     if (wallpaper_data_[wallpaper_])
         lv_image_set_src(wallpaper_obj_, &wallpapers_[wallpaper_]);
     lv_obj_remove_flag(wallpaper_obj_, LV_OBJ_FLAG_CLICKABLE);
-    // Linear shades leave the portrait clear without concentric dark bands.
-    Fade(content_, 0, 0, 360, 155, kBg, false, false);
-    Fade(content_, 0, 252, 360, 108, kBg, false, true);
+    // The cached wallpaper already contains the smooth readability shades.
     if (snapshot_.settings.show_clock) {
         clock_ = Text(content_, "--:--", 80, 60, 200, 44, kText, 400, true, 52);
         date_ = Text(content_, "", 74, 116, 212, 14, 0xd8d5df, 400, true, 22);

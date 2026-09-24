@@ -5,7 +5,7 @@ using namespace baji::ui;
 
 void WatchUi::RenderDisplaySettings() {
     PageTitle("显示设置", kPurple);
-    auto* list = ScrollList(content_, 60, 96, 240, 210);
+    auto* list = page_scroll_ = ScrollList(content_, 60, 96, 240, 210);
     const bool english = snapshot_.settings.language != 0;
     auto detail = [&](lv_obj_t* item, const char* text, int width = 148) {
         SingleLine(Text(item, text, 54, 33, width, 12, kMuted, 400, false, 18));

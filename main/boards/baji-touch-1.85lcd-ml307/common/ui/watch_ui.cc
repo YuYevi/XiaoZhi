@@ -28,6 +28,7 @@ WatchUi::WatchUi(lv_display_t* d, const lv_font_t* f, const lv_font_t* i, WatchS
 
 WatchUi::~WatchUi() {
     if (menu_navigation_timer_) lv_timer_delete(menu_navigation_timer_);
+    if (completion_timer_) lv_timer_delete(completion_timer_);
     if (animation_timer_)
         lv_timer_delete(animation_timer_);
     if (root_)
@@ -53,6 +54,19 @@ void WatchUi::Create() {
     animation_timer_ = lv_timer_create(
         [](lv_timer_t* timer) { static_cast<WatchUi*>(lv_timer_get_user_data(timer))->Animate(); }, 33,
         this);
+    // Storage completes on Application's task. Poll only during a submitted
+    // operation, and apply its result on LVGL without waiting for the 1 s
+    // device-status tick or retaining this object in the storage callback.
+    completion_timer_ = lv_timer_create([](lv_timer_t* timer) {
+        auto* self = static_cast<WatchUi*>(lv_timer_get_user_data(timer));
+        bool done;
+        {
+            std::lock_guard<std::mutex> lock(self->async_->mutex);
+            done = self->async_->done;
+        }
+        if (done) self->Tick();
+    }, 20, this);
+    if (completion_timer_) lv_timer_pause(completion_timer_);
     Render();
 }
 
@@ -86,6 +100,9 @@ void WatchUi::Navigate(Page p) {
     ToggleControl(false);
     CloseModal();
     page_ = p;
+    // A deliberate navigation starts at the new page's beginning. Local
+    // rebuilds preserve the current list position below.
+    page_scroll_ = nullptr;
     snapshot_ = services_.Snapshot();
     Render();
 }
@@ -94,6 +111,8 @@ void WatchUi::Render() {
     ResetMenuInteraction();
     if (!root_)
         return;
+    const int32_t scroll_y = page_scroll_ ? lv_obj_get_scroll_y(page_scroll_) : 0;
+    page_scroll_ = nullptr;
     if (status_) {
         lv_obj_delete(status_);
         status_ = nullptr;
@@ -109,6 +128,7 @@ void WatchUi::Render() {
             alarm_drag_row_ = nullptr;
     chat_header_text_.clear();
     wifi_loader_ = thinking_ = answer_cursor_ = nullptr;
+    wifi_input_ = wifi_password_label_ = wifi_hint_ = wifi_eye_icon_ = wifi_join_ = wifi_join_icon_ = nullptr;
     calendar_days_ = clock_minute_ = clock_colon_ = chat_timer_dot_ = settings_wifi_label_ =
         nullptr;
     voice_bars_.fill(nullptr);
@@ -150,6 +170,11 @@ void WatchUi::Render() {
             break;
     }
     RenderStatus();
+    if (page_scroll_ && scroll_y) {
+        lv_obj_update_layout(page_scroll_);
+        // LVGL clamps the saved offset if deleting a row shortened the list.
+        lv_obj_scroll_to_y(page_scroll_, scroll_y, LV_ANIM_OFF);
+    }
     RefreshDynamic();
     UpdateAnimationTimer();
     revision_ = snapshot_.revision;
@@ -261,6 +286,10 @@ void WatchUi::Submit(std::function<bool(std::string*)> work, Page destination, c
         state->text = ok ? text : e;
         state->done = true;
     });
+    if (completion_timer_) {
+        lv_timer_reset(completion_timer_);
+        lv_timer_resume(completion_timer_);
+    }
 }
 
 void WatchUi::SaveSettings(const WatchSettings& settings) {
@@ -441,6 +470,7 @@ void WatchUi::Gesture(lv_event_t* e) {
         if (date_drag_ && swiped_) {
             int shift = calendar_days_ ? lv_obj_get_x(calendar_days_) : dx;
             int delta = std::clamp(static_cast<int>(std::round(-shift / 41.0)), -9, 9);
+            if (delta) page_scroll_ = nullptr;
             selected_date_offset_ += delta;
             Render();
             if (calendar_days_) {
@@ -490,15 +520,20 @@ void WatchUi::Tick() {
             async_->busy = async_->done = false;
         }
     }
+    if (done && completion_timer_) lv_timer_pause(completion_timer_);
     auto old = snapshot_;
     snapshot_ = services_.Snapshot();
     power_save_ = snapshot_.settings.power_save;
+    bool rebuilt = false;
     if (done) {
         if (ok) {
-            if (same_navigation && dest != page_ && page_ == Page::AlarmEditor)
+            if (same_navigation && dest != page_ && page_ == Page::AlarmEditor) {
                 Navigate(dest);
-            else if (same_navigation && page_ != Page::Network)
+                rebuilt = true;
+            } else if (same_navigation && page_ != Page::Network) {
                 Render();
+                rebuilt = true;
+            }
             Emit(Action::SettingsChanged);
         }
         if (!text.empty())
@@ -506,13 +541,20 @@ void WatchUi::Tick() {
     }
     // A setting can finish saving after the user has already left its page.
     // Refresh the current page without undoing that navigation.
-    if (snapshot_.revision != revision_ &&
+    // Clock synchronization and midnight do not change the saved-data
+    // revision. Refresh the calendar when its displayed day becomes stale.
+    const bool calendar_day_changed = page_ == Page::Calendar &&
+        (old.time_valid != snapshot_.time_valid ||
+         (snapshot_.time_valid && old.now / 86400 != snapshot_.now / 86400));
+    if (!rebuilt && (calendar_day_changed || (snapshot_.revision != revision_ &&
         (page_ == Page::Calendar || page_ == Page::Alarms || page_ == Page::Settings ||
          page_ == Page::DisplaySettings ||
-         (page_ == Page::Standby && old.settings.show_clock != snapshot_.settings.show_clock))) {
+         (page_ == Page::Standby && old.settings.show_clock != snapshot_.settings.show_clock))))) {
+        if (calendar_day_changed) page_scroll_ = nullptr;
         Render();
+        rebuilt = true;
     }
-    if (page_ == Page::Countdown && (old.countdown.active != snapshot_.countdown.active ||
+    if (!rebuilt && page_ == Page::Countdown && (old.countdown.active != snapshot_.countdown.active ||
                                      old.countdown.paused != snapshot_.countdown.paused))
         Render();
     RefreshReminder();

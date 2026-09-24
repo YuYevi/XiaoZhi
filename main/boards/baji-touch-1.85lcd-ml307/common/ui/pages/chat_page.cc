@@ -12,9 +12,13 @@ using namespace baji::ui;
 void WatchUi::ShowChat(bool start) {
     if (power_overlay_)
         return;
-    if (page_ != Page::Chat)
+    if (page_ != Page::Chat) {
         chat_return_ = page_ == Page::Standby ? Page::Standby : Page::Menu;
-    Navigate(Page::Chat);
+        Navigate(Page::Chat);
+    }
+    // Runtime also calls this on listening/speaking transitions. The existing
+    // page receives those changes through SetStatus; keep its video buffers
+    // and subtitle objects instead of tearing them down for every transition.
     if (start)
         Emit(Action::StartChat);
 }

@@ -5,7 +5,7 @@ using namespace baji::ui;
 
 void WatchUi::RenderAlarms() {
     DrawTabs(false);
-    auto* list = ScrollList(content_, 60, 98, 240, 182);
+    auto* list = page_scroll_ = ScrollList(content_, 60, 98, 240, 182);
     int y = 0;
     for (auto alarm : snapshot_.alarms) {
         auto* holder = Box(list, 0, y, 240, 64, kBg);

@@ -99,6 +99,7 @@ class WatchUi {
     Page page_ = Page::Standby, chat_return_ = Page::Standby, menu_destination_ = Page::Menu;
     lv_obj_t *root_ = nullptr, *content_ = nullptr, *control_ = nullptr, *modal_ = nullptr,
              *reminder_ = nullptr, *toast_ = nullptr, *status_ = nullptr;
+    lv_obj_t* page_scroll_ = nullptr;
     lv_obj_t *power_overlay_ = nullptr, *power_loader_ = nullptr;
     lv_obj_t *clock_ = nullptr, *date_ = nullptr, *user_label_ = nullptr, *answer_label_ = nullptr,
              *chat_header_ = nullptr, *chat_mic_ = nullptr, *chat_timer_ = nullptr;
@@ -109,7 +110,10 @@ class WatchUi {
     lv_obj_t *calendar_days_ = nullptr, *clock_minute_ = nullptr, *clock_colon_ = nullptr,
              *chat_timer_dot_ = nullptr, *settings_wifi_label_ = nullptr;
     lv_obj_t *wifi_loader_ = nullptr, *thinking_ = nullptr, *answer_cursor_ = nullptr;
+    lv_obj_t *wifi_input_ = nullptr, *wifi_password_label_ = nullptr, *wifi_hint_ = nullptr,
+             *wifi_eye_icon_ = nullptr, *wifi_join_ = nullptr, *wifi_join_icon_ = nullptr;
     lv_timer_t* animation_timer_ = nullptr;
+    lv_timer_t* completion_timer_ = nullptr;
     lv_timer_t* menu_navigation_timer_ = nullptr;
     std::array<lv_obj_t*, 5> menu_plates_{};
     size_t menu_plate_count_ = 0;
@@ -182,6 +186,7 @@ class WatchUi {
     void CloseModal();
     void DrawTabs(bool);
     void DrawKeyboard();
+    void RefreshWifiPassword();
     void ConnectWifi();
     const lv_font_t* Font(float, int weight = 400);
     lv_obj_t* Icon(lv_obj_t*, const char*, int, int, int, uint32_t color = 0xffffff);

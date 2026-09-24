@@ -1,5 +1,6 @@
 #include "ui/watch_ui.h"
 #include "ui/watch_ui_internal.h"
+#include "ui/watch_resources.h"
 #include <algorithm>
 #include <cmath>
 #include <cctype>
@@ -52,34 +53,21 @@ void WatchUi::RenderNetwork() {
     }
 
     if (wifi_phase_ == "password") {
-        auto* input = Box(content_, 55, 92, 250, 44,
-                          wifi_error_.empty() ? kSurface : 0x281b24, 13);
-        Border(input, wifi_error_.empty() ? kBlue : kRose, wifi_error_.empty() ? 66 : 110);
+        auto* input = wifi_input_ = Box(content_, 55, 92, 250, 44, kSurface, 13);
         lv_obj_align(Icon(input, "lock", 0, 0, 16, kMuted), LV_ALIGN_LEFT_MID, 11, 0);
-        std::string password = wifi_password_;
-        if (!password_visible_) {
-            password.clear();
-            for (size_t n = 0; n < std::min<size_t>(18, CharacterCount(wifi_password_)); ++n)
-                password += "•";
-        }
-        auto* value = Text(input, password.empty() ? (english ? "Wi-Fi password" : "输入 WLAN 密码") :
-                           password.c_str(), 35, 11, 170, 14,
-                           password.empty() ? kMuted : kText, 400, false, 22);
-        if (!password.empty()) SetLabelText(value, password.c_str());
+        auto* value = wifi_password_label_ = Text(input, "", 35, 11, 170, 14,
+                                                  kText, 400, false, 22);
         lv_label_set_long_mode(value, LV_LABEL_LONG_CLIP);
         lv_obj_set_height(value, lv_font_get_line_height(lv_obj_get_style_text_font(value, LV_PART_MAIN)));
         auto* eye = Button(input, 208, 4, 36, 36, kSurface, 10, [this] {
             password_visible_ = !password_visible_;
-            Render();
+            RefreshWifiPassword();
         });
-        CenteredIcon(eye, password_visible_ ? "eye-off" : "eye", 18, kMuted);
-        const std::string hint = wifi_error_.empty() ?
-            (english ? "At least 8 characters · " : "至少 8 位 · ") +
-                std::to_string(wifi_password_.size()) + "/63" : wifi_error_;
-        auto* guidance = Text(content_, hint.c_str(), 60, 144, 240, 12,
-                               wifi_error_.empty() ? kMuted : kRose, 400, true, 18);
-        SingleLine(guidance);
+        wifi_eye_icon_ = CenteredIcon(eye, "eye", 18, kMuted);
+        wifi_hint_ = Text(content_, "", 60, 144, 240, 12, kMuted, 400, true, 18);
+        SingleLine(wifi_hint_);
         DrawKeyboard();
+        RefreshWifiPassword();
         return;
     }
 
@@ -94,7 +82,7 @@ void WatchUi::RenderNetwork() {
                 [this, on] { Emit(Action::SetNetwork, on ? -1 : 0); });
     });
 
-    auto* networks = ScrollList(content_, 60, 151, 240, 124);
+    auto* networks = page_scroll_ = ScrollList(content_, 60, 151, 240, 124);
     int y = 0;
     for (const auto& network : wifi_networks_) {
         auto* row = Button(networks, 0, y, 240, 54,
@@ -185,7 +173,7 @@ void WatchUi::DrawKeyboard() {
             auto* button = Button(content_, x, y, width, 32, kSurface, 8, [this, key] {
                 if (wifi_password_.size() + key.size() <= 63) wifi_password_ += key;
                 wifi_error_.clear();
-                Render();
+                RefreshWifiPassword();
             }, key.c_str(), 14, 400);
             Border(button, 0xffffff, 28);
         }
@@ -194,7 +182,7 @@ void WatchUi::DrawKeyboard() {
             auto* erase = Button(content_, x, y, width, 32, 0x282831, 8, [this] {
                 RemoveCharacter(wifi_password_);
                 wifi_error_.clear();
-                Render();
+                RefreshWifiPassword();
             });
             Border(erase, 0xffffff, 28);
             CenteredIcon(erase, "delete", 16, kText);
@@ -208,14 +196,57 @@ void WatchUi::DrawKeyboard() {
     auto* space = Button(content_, 131, 285, 98, 34, kSurface, 9, [this] {
         if (wifi_password_.size() < 63) wifi_password_ += ' ';
         wifi_error_.clear();
-        Render();
+        RefreshWifiPassword();
     }, "空格", 14, 400);
     Border(space, 0xffffff, 28);
-    const bool valid = wifi_password_.size() >= 8;
-    auto* join = Button(content_, 233, 285, 46, 34, valid ? 0x203c33 : kSurface, 9,
+    auto* join = wifi_join_ = Button(content_, 233, 285, 46, 34, kSurface, 9,
                         [this] { ConnectWifi(); });
-    Border(join, valid ? kGreen : 0xffffff, valid ? 120 : 28);
-    CenteredIcon(join, "check", 18, valid ? kGreen : kMuted);
+    wifi_join_icon_ = CenteredIcon(join, "check", 18, kMuted);
+}
+
+void WatchUi::RefreshWifiPassword() {
+    if (!wifi_password_label_ || wifi_phase_ != "password") return;
+    const bool english = snapshot_.settings.language != 0;
+    std::string shown = wifi_password_;
+    if (!password_visible_) {
+        shown.clear();
+        for (size_t n = 0; n < std::min<size_t>(18, CharacterCount(wifi_password_)); ++n)
+            shown += "•";
+    }
+    if (shown.empty()) shown = english ? "Wi-Fi password" : "输入 WLAN 密码";
+    // Keep the newly typed end visible without scrolling animations or
+    // rebuilding the keyboard. Measure with the label's actual font/tracking.
+    SetLabelText(wifi_password_label_, shown.c_str());
+    if (!wifi_password_.empty()) {
+        const auto* font = lv_obj_get_style_text_font(wifi_password_label_, LV_PART_MAIN);
+        const int spacing = lv_obj_get_style_text_letter_space(wifi_password_label_, LV_PART_MAIN);
+        size_t start = 0;
+        lv_point_t size;
+        do {
+            lv_text_get_size(&size, shown.c_str() + start, font, spacing, 0,
+                             LV_COORD_MAX, LV_TEXT_FLAG_EXPAND);
+            if (size.x <= 170 || start == shown.size()) break;
+            start = NextCharacter(shown, start);
+        } while (true);
+        if (start) SetLabelText(wifi_password_label_, shown.c_str() + start);
+    }
+    lv_obj_set_style_text_color(wifi_password_label_, lv_color_hex(wifi_password_.empty() ? kMuted : kText), 0);
+    const bool error = !wifi_error_.empty();
+    lv_obj_set_style_bg_color(wifi_input_, lv_color_hex(error ? 0x281b24 : kSurface), 0);
+    Border(wifi_input_, error ? kRose : kBlue, error ? 110 : 66);
+    const std::string hint = error ? wifi_error_ :
+        (english ? "At least 8 characters · " : "至少 8 位 · ") +
+            std::to_string(wifi_password_.size()) + "/63";
+    SetLabelText(wifi_hint_, hint.c_str());
+    lv_obj_set_style_text_color(wifi_hint_, lv_color_hex(error ? kRose : kMuted), 0);
+    if (const auto* icon = WatchResources::Icon(password_visible_ ? "eye-off" : "eye", 18, kMuted))
+        lv_image_set_src(wifi_eye_icon_, icon);
+    const bool valid = wifi_password_.size() >= 8;
+    const uint32_t color = valid ? 0x203c33 : kSurface;
+    lv_obj_set_style_bg_color(wifi_join_, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_color(wifi_join_, lv_color_hex(BlendColor(color, 0xffffff, .10f)), LV_STATE_PRESSED);
+    Border(wifi_join_, valid ? kGreen : 0xffffff, valid ? 120 : 28);
+    lv_obj_set_style_image_recolor(wifi_join_icon_, lv_color_hex(valid ? kGreen : kMuted), 0);
 }
 
 void WatchUi::SetWifiCallbacks(std::function<void()> scan,
@@ -253,7 +284,7 @@ void WatchUi::ConnectWifi() {
     }
     if (wifi_phase_ == "password" && wifi_password_.size() < 8) {
         wifi_error_ = "密码至少 8 位";
-        Render();
+        RefreshWifiPassword();
         return;
     }
     wifi_phase_ = "connecting";

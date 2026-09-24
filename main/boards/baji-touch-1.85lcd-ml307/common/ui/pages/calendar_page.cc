@@ -33,6 +33,7 @@ void WatchUi::RenderCalendar() {
         const int64_t day_start = chosen + d * 86400;
         const auto day = Date(day_start);
         auto* cell = Button(calendar_days_, 123 + d * 41, 0, 41, 64, 0, 0, [this, d] {
+            if (d) page_scroll_ = nullptr;
             selected_date_offset_ += d;
             Render();
         });
@@ -50,7 +51,7 @@ void WatchUi::RenderCalendar() {
     // The strip may slide, but its sides fade into a static, flat background.
     Fade(calendar_strip_, 0, 0, 22, 64, kBg, true, false);
     Fade(calendar_strip_, 266, 0, 22, 64, kBg, true, true);
-    auto* list = ScrollList(content_, 60, 195, 240, 109);
+    auto* list = page_scroll_ = ScrollList(content_, 60, 195, 240, 109);
     int y = 0;
     for (const auto& event : snapshot_.events) {
         if (event.due < chosen || event.due >= chosen + 86400 || event.completed) continue;

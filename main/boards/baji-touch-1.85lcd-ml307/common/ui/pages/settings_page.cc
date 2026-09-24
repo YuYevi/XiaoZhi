@@ -6,7 +6,7 @@ using namespace baji::ui;
 
 void WatchUi::RenderSettings() {
     PageTitle("设置", kPurple);
-    auto* list = ScrollList(content_, 60, 96, 240, 210);
+    auto* list = page_scroll_ = ScrollList(content_, 60, 96, 240, 210);
     const bool english = snapshot_.settings.language != 0;
     const bool wifi = device_.network.find("Wi-Fi") != std::string::npos;
     const bool cell = device_.network.find("4G") != std::string::npos;
@@ -53,8 +53,11 @@ void WatchUi::RenderSettings() {
     detail(item, "熄屏与待机显示");
     arrow(item);
 
-    item = row("languages", "语言", kPurple,
-               [this] { Emit(Action::SetLanguage, snapshot_.settings.language ? 0 : 1); });
+    item = row("languages", "语言", kPurple, [this] {
+        auto settings = snapshot_.settings;
+        settings.language = settings.language ? 0 : 1;
+        SaveSettings(settings);
+    });
     detail(item, english ? "English" : "简体中文");
     arrow(item);
 
