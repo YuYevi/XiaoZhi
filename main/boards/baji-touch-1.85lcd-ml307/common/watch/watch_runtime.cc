@@ -210,7 +210,7 @@ void WatchRuntime::Wake() {
     display_.SetWatchAwake(true);
     board_.GetBacklight()->RestoreBrightness();
     auto& app = Application::GetInstance();
-    if (network_enabled_ && started_ && !ringing_ && !services_.Snapshot().settings.power_save && app.GetDeviceState() == kDeviceStateIdle)
+    if (network_enabled_ && started_ && !display_.IsWatchBooting() && !ringing_ && !services_.Snapshot().settings.power_save && app.GetDeviceState() == kDeviceStateIdle)
         app.GetAudioService().EnableWakeWordDetection(true);
     ApplyPowerSettings();
     ESP_LOGI(kTag, "Screen awake");
@@ -218,7 +218,7 @@ void WatchRuntime::Wake() {
 
 void WatchRuntime::Sleep() {
     auto& app = Application::GetInstance();
-    if (!awake_ || flashlight_ || !ScreenCanSleep(app.GetDeviceState()) || ringing_ ||
+    if (!awake_ || display_.IsWatchBooting() || flashlight_ || !ScreenCanSleep(app.GetDeviceState()) || ringing_ ||
         (!reminder_timed_out_ && !services_.Snapshot().reminders.empty())) return;
     awake_ = false;
     sleep_requested_ = false;
@@ -244,7 +244,7 @@ void WatchRuntime::Back() {
 }
 
 void WatchRuntime::Chat() {
-    if (!IsAwake()) return;
+    if (!IsAwake() || display_.IsWatchBooting()) return;
     last_activity_ = esp_timer_get_time();
     display_.ShowPowerMenu(false);
     display_.ShowWatchChat();
@@ -292,6 +292,7 @@ void WatchRuntime::PowerLongPress() {
 }
 
 void WatchRuntime::RequestSleep() {
+    if (display_.IsWatchBooting()) return;
     CancelPowerTap();
     display_.ShowPowerMenu(false);
     const auto state = Application::GetInstance().GetDeviceState();
@@ -322,6 +323,7 @@ void WatchRuntime::RequestPowerChange(bool reboot) {
     sleep_requested_ = false;
     StopRing();
     StopChat();
+    static_cast<BajiAudioCodec*>(board_.GetAudioCodec())->PrepareForShutdown();
     power_transition_ = true;
     power_reboot_ = reboot;
     power_reboot_at_ = esp_timer_get_time() + 2100000;
@@ -388,6 +390,7 @@ void WatchRuntime::Action(WatchUi::Action action, int value) {
     switch (action) {
         case WatchUi::Action::Activity: break;
         case WatchUi::Action::StartChat:
+            if (display_.IsWatchBooting()) break;
             if (!network_enabled_) {
                 display_.ShowNotification("请先开启 WLAN 或移动数据");
             } else if (!services_.Snapshot().reminders.empty()) {
@@ -440,7 +443,7 @@ void WatchRuntime::Action(WatchUi::Action action, int value) {
             RequestPowerChange(true);
             break;
         case WatchUi::Action::CheckUpdate:
-            if (app.GetDeviceState() == kDeviceStateIdle && !ringing_) app.Reboot();
+            if (app.GetDeviceState() == kDeviceStateIdle && !ringing_) RequestPowerChange(true);
             else display_.ShowNotification("设备忙，请稍后重试");
             break;
         case WatchUi::Action::FactoryReset: {
@@ -481,7 +484,7 @@ void WatchRuntime::StopRing() {
     if (app.GetDeviceState() == kDeviceStateIdle) app.GetAudioService().ResetDecoder();
 #endif
     static_cast<BajiAudioCodec*>(board_.GetAudioCodec())->SetAlertVolume(-1);
-    if (network_enabled_ && awake_ && !services_.Snapshot().settings.power_save && app.GetDeviceState() == kDeviceStateIdle)
+    if (network_enabled_ && awake_ && !display_.IsWatchBooting() && !services_.Snapshot().settings.power_save && app.GetDeviceState() == kDeviceStateIdle)
         app.GetAudioService().EnableWakeWordDetection(true);
     last_activity_ = esp_timer_get_time();
 }
@@ -541,21 +544,26 @@ void WatchRuntime::Tick() {
         if (power_reboot_ && now >= power_reboot_at_) app.Reboot();
         return;
     }
+    const auto state = app.GetDeviceState();
+    display_.UpdateBootState(state);
+    const bool booting = display_.IsWatchBooting();
+    if (booting || booting_) last_activity_ = now;
+    if (booting_ && !booting) ApplyPowerSettings();
+    booting_ = booting;
     const auto snapshot = services_.Snapshot();
     UpdateWifiState();
     if (applied_power_save_ != snapshot.settings.power_save) ApplyPowerSettings();
-    const auto state = app.GetDeviceState();
     if (static_cast<int>(state) != last_state_) {
         last_state_ = state;
         if (ChatState(state)) {
-            if (!awake_ || sleep_requested_) StopChat();
+            if (booting || !awake_ || sleep_requested_) StopChat();
             else if (!stop_chat_requested_) display_.ShowWatchChat();
         }
     }
     ContinueStopChat();
-    UpdateReminder(snapshot, now);
+    if (!booting) UpdateReminder(snapshot, now);
     if (sleep_requested_ && !stop_chat_requested_ && !chat_start_submitted_) Sleep();
-    if ((!network_enabled_ || !awake_ || snapshot.settings.power_save) && state == kDeviceStateIdle)
+    if (booting || ((!network_enabled_ || !awake_ || snapshot.settings.power_save) && state == kDeviceStateIdle))
         app.GetAudioService().EnableWakeWordDetection(false);
     if (!ScreenCanSleep(state) || (!snapshot.reminders.empty() && !reminder_timed_out_)) last_activity_ = now;
     const int timeout = snapshot.settings.screen_timeout_seconds;
@@ -592,7 +600,7 @@ void WatchRuntime::ApplyPowerSettings() {
     auto& app = Application::GetInstance();
     if (app.GetDeviceState() == kDeviceStateIdle) {
         board_.SetPowerSaveLevel(settings.power_save || !awake_ ? PowerSaveLevel::LOW_POWER : PowerSaveLevel::BALANCED);
-        if (started_ && !ringing_) app.GetAudioService().EnableWakeWordDetection(network_enabled_ && awake_ && !settings.power_save);
+        if (started_ && !ringing_) app.GetAudioService().EnableWakeWordDetection(network_enabled_ && awake_ && !display_.IsWatchBooting() && !settings.power_save);
     }
 }
 

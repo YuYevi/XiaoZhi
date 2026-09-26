@@ -34,6 +34,7 @@ private:
     esp_timer_handle_t power_tap_timer_ = nullptr;
     std::atomic<bool> tick_pending_{false};
     bool started_ = false;
+    bool booting_ = true;
     bool awake_ = true;
     bool sleep_requested_ = false;
     bool power_transition_ = false;

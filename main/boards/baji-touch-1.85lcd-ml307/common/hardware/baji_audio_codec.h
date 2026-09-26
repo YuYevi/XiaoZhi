@@ -31,6 +31,11 @@ public:
     void EnableInput(bool enable) override;
     void EnableOutput(bool enable) override;
 
+    // Permanently mute the amplifier for the remainder of a shutdown/reboot.
+    // Audio tasks can finish asynchronously, so this also rejects late output
+    // enables and writes after the shutdown sequence has started.
+    void PrepareForShutdown();
+
 private:
     const audio_codec_data_if_t* data_if_ = nullptr;
     const audio_codec_ctrl_if_t* ctrl_if_ = nullptr;
@@ -42,6 +47,7 @@ private:
     int alert_volume_ = -1;
     std::vector<int32_t> input_buffer_;
     std::vector<int32_t> output_buffer_;
+    bool shutdown_prepared_ = false;
 
     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk,
         gpio_num_t ws, gpio_num_t dout, gpio_num_t din);

@@ -40,7 +40,15 @@ void WatchUi::Confirm(const char* title, const char* text, std::function<void()>
 }
 
 void WatchUi::SetSystemMessage(const char* text, uint32_t milliseconds) {
-    if (!root_ || !text || !*text) return;
+    if (!root_ || !text) return;
+    if (IsBooting()) {
+        // Activation codes and provisioning instructions must remain readable
+        // throughout startup instead of expiring as a five-second toast.
+        boot_message_text_ = text;
+        RefreshBoot();
+        return;
+    }
+    if (!*text) return;
     if (!milliseconds) {
         ResetMenuInteraction();
         CloseModal();

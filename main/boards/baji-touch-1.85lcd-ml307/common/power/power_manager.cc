@@ -1,6 +1,8 @@
 #include "power_manager.h"
 #include "config.h"
 #include "board.h"
+#include "hardware/baji_audio_codec.h"
+#include "hardware/baji_backlight.h"
 
 #include <utility>
 #include <driver/ledc.h>
@@ -206,7 +208,10 @@ void PowerManager::BeginEmergencyShutdown() {
 }
 
 void PowerManager::RunShutdownSequence() {
-
+    auto& board = Board::GetInstance();
+    if (auto* codec = static_cast<BajiAudioCodec*>(board.GetAudioCodec())) {
+        codec->PrepareForShutdown();
+    }
     if (on_power_ui_) {
         on_power_ui_(PowerUiHint::ShuttingDown);
     }
@@ -222,8 +227,8 @@ void PowerManager::RunShutdownSequence() {
 
     RememberUsbShutdown();
 
-    if (auto* backlight = Board::GetInstance().GetBacklight()) {
-        backlight->SetBrightness(0);
+    if (auto* backlight = static_cast<BajiBacklight*>(board.GetBacklight())) {
+        backlight->TurnOffImmediately();
     }
 
     gpio_config_t wake_in = {};
@@ -372,10 +377,6 @@ PowerManager::~PowerManager() {
 }
 
 bool PowerManager::IsCharging() {
-
-    if (battery_level_ == 100) {
-        return false;
-    }
     return is_charging_;
 }
 

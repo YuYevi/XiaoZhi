@@ -10,7 +10,7 @@
 using namespace baji::ui;
 
 void WatchUi::ShowChat(bool start) {
-    if (power_overlay_)
+    if (power_overlay_ || IsBooting())
         return;
     if (page_ != Page::Chat) {
         chat_return_ = page_ == Page::Standby ? Page::Standby : Page::Menu;
@@ -70,6 +70,14 @@ void WatchUi::RenderChat() {
 
 void WatchUi::SetStatus(const char* s) {
     status_text_ = s ? s : "";
+    if (IsBooting()) {
+        // Associate this native stage message with its current state before
+        // the runtime poll, so the next poll does not erase the new detail.
+        boot_state_ = Application::GetInstance().GetDeviceState();
+        boot_status_ = status_text_;
+        RefreshBoot();
+        return;
+    }
     RefreshMicrophone();
     RefreshDynamic();
     UpdateAnimationTimer();

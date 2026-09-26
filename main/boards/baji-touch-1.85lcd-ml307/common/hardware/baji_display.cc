@@ -29,12 +29,10 @@ BajiDisplay::BajiDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
                          bool mirror_x, bool mirror_y, bool swap_xy, bool quiet_boot)
     : SpiLcdDisplay(panel_io, panel, width, height, offset_x, offset_y,
                     mirror_x, mirror_y, swap_xy), quiet_boot_(quiet_boot) {
-    if (quiet_boot) {
-        DisplayLockGuard lock(this);
-        auto screen = lv_display_get_screen_active(display_);
-        lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
-    }
+    DisplayLockGuard lock(this);
+    auto screen = lv_display_get_screen_active(display_);
+    lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 }
 
 BajiDisplay::~BajiDisplay() {
@@ -131,6 +129,25 @@ void BajiDisplay::SetupUI() {
     watch_ui_->Create();
     watch_ui_->SetWifiCallbacks(watch_wifi_scan_, watch_wifi_connect_);
     watch_ui_->SetAwake(watch_awake_);
+    lv_refr_now(display_);
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(panel_io_, -1, nullptr, 0));
+    if (first_frame_callback_) {
+        auto callback = std::move(first_frame_callback_);
+        callback();
+    }
+}
+
+void BajiDisplay::SetFirstFrameCallback(std::function<void()> callback) {
+    DisplayLockGuard lock(this);
+    first_frame_callback_ = std::move(callback);
+}
+
+void BajiDisplay::RefreshNow() {
+    DisplayLockGuard lock(this);
+    lv_refr_now(display_);
+    // The SPI parameter transaction drains queued color transfers first.
+    // A negative command with no parameters sends nothing to the panel.
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(panel_io_, -1, nullptr, 0));
 }
 
 void BajiDisplay::SetTheme(Theme* theme) {
@@ -160,9 +177,10 @@ void BajiDisplay::SetChatMessage(const char* role, const char* content) {
     if (role && std::strcmp(role, "system") == 0) {
         if (content && SystemInfo::GetUserAgent() == content) return;
         // Activation codes, provisioning instructions and errors must also be
-        // visible outside the conversation page. An empty native idle message
-        // must not dismiss a notification that is still being read.
-        if (content && content[0]) watch_ui_->SetSystemMessage(content, 15000);
+        // visible outside the conversation page. During boot an empty message
+        // clears stale setup instructions; later it preserves notifications.
+        if ((content && content[0]) || watch_ui_->IsBooting())
+            watch_ui_->SetSystemMessage(content ? content : "", 15000);
     } else {
         watch_ui_->SetChatMessage(role ? role : "assistant", content ? content : "");
     }
@@ -231,6 +249,16 @@ void BajiDisplay::WatchBack() {
 bool BajiDisplay::IsWatchChat() {
     DisplayLockGuard lock(this);
     return watch_ui_ && watch_ui_->IsChat();
+}
+
+void BajiDisplay::UpdateBootState(DeviceState state) {
+    DisplayLockGuard lock(this);
+    if (watch_ui_) watch_ui_->UpdateBootState(state);
+}
+
+bool BajiDisplay::IsWatchBooting() {
+    DisplayLockGuard lock(this);
+    return !watch_ui_ || watch_ui_->IsBooting();
 }
 
 void BajiDisplay::ShowPowerMenu(bool show) {

@@ -2,6 +2,7 @@
 #include "application.h"
 #include "config.h"
 #include "hardware/baji_audio_codec.h"
+#include "hardware/baji_backlight.h"
 #include "hardware/baji_display.h"
 #include "power/power_manager.h"
 #include "watch/watch_runtime.h"
@@ -19,6 +20,7 @@
 #include <esp_lcd_st77916.h>
 #include <esp_timer.h>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <esp_io_expander_tca9554.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -26,6 +28,18 @@
 #include <cstdio>
 
 namespace {
+
+static BajiAudioCodec* g_baji_shutdown_codec = nullptr;
+static BajiBacklight* g_baji_shutdown_backlight = nullptr;
+
+static void baji_shutdown_handler(void) {
+    if (g_baji_shutdown_backlight != nullptr) {
+        g_baji_shutdown_backlight->TurnOffImmediately();
+    }
+    if (g_baji_shutdown_codec != nullptr) {
+        g_baji_shutdown_codec->PrepareForShutdown();
+    }
+}
 
 constexpr uint64_t LCD_OPCODE_READ_CMD = 0x03ULL;
 
@@ -184,20 +198,23 @@ void baji_185_ensure_io_expander(void)
     const uint32_t in_pins = BAJI185_IOX_PIN_MASK_VOL_DOWN | BAJI185_IOX_PIN_MASK_VOL_UP;
     const uint32_t out_pins = BAJI185_IOX_PIN_MASK_4G_PWRON | BAJI185_IOX_PIN_MASK_4G_RST |
                               BAJI185_IOX_PIN_MASK_PA | BAJI185_IOX_PIN_MASK_RUN_LED | BAJI185_IOX_PIN_MASK_LCD_RST;
+
+    // Program the output latch while the pins are still inputs. The generic
+    // set_level API rejects input pins, so use the driver's public register
+    // callback. TCA9554 powers up with a high latch; preloading prevents a
+    // brief PA enable when the direction changes.
+    uint32_t safe_levels = (0xffu & ~out_pins) |
+                           BAJI185_IOX_PIN_MASK_4G_RST | BAJI185_IOX_PIN_MASK_LCD_RST;
+#ifdef AUDIO_CODEC_PA_INVERTED
+    if (AUDIO_CODEC_PA_INVERTED) {
+        safe_levels |= BAJI185_IOX_PIN_MASK_PA;
+    }
+#endif
+    ESP_ERROR_CHECK(g_baji185_io_expander->write_output_reg(g_baji185_io_expander, safe_levels));
+
     ESP_ERROR_CHECK(esp_io_expander_set_dir(g_baji185_io_expander, in_pins, IO_EXPANDER_INPUT));
 
     ESP_ERROR_CHECK(esp_io_expander_set_dir(g_baji185_io_expander, out_pins, IO_EXPANDER_OUTPUT));
-
-    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji185_io_expander, BAJI185_IOX_PIN_MASK_4G_PWRON, 0));
-    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji185_io_expander, BAJI185_IOX_PIN_MASK_4G_RST, 1));
-
-#ifdef AUDIO_CODEC_PA_INVERTED
-    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji185_io_expander, BAJI185_IOX_PIN_MASK_PA, AUDIO_CODEC_PA_INVERTED ? 1 : 0));
-#else
-    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji185_io_expander, BAJI185_IOX_PIN_MASK_PA, 0));
-#endif
-    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji185_io_expander, BAJI185_IOX_PIN_MASK_RUN_LED, 0));
-    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji185_io_expander, BAJI185_IOX_PIN_MASK_LCD_RST, 1));
 
 #if BAJI185_RUN_LED_AUTO_BLINK
     if (g_baji185_run_led_timer == nullptr) {
@@ -545,6 +562,9 @@ public:
         network_offline_ = Settings("watch").GetBool("net_off", false);
         // Complete BAJI's power-on gate before initializing screen and audio.
         power_ = new PowerManager(POWER_USB_IN);
+        auto* backlight = static_cast<BajiBacklight*>(GetBacklight());
+        g_baji_shutdown_backlight = backlight;
+        ESP_ERROR_CHECK(esp_register_shutdown_handler(baji_shutdown_handler));
         InitializeI2c();
         InitializeTca9554();
         InitializeSpi();
@@ -552,7 +572,7 @@ public:
         display_->InitializeTouch(i2c_bus_);
         InitializeWatch();
         InitializeButtons();
-        GetBacklight()->RestoreBrightness();
+        display_->SetFirstFrameCallback([backlight]() { backlight->RestoreBrightness(); });
     }
     AudioCodec* GetAudioCodec() override {
         static BajiAudioCodec codec(i2c_bus_, I2C_NUM_0,
@@ -565,11 +585,12 @@ public:
 #endif
             [this](bool enabled) { SetExpander(BAJI185_IOX_PIN_MASK_PA, enabled != static_cast<bool>(AUDIO_CODEC_PA_INVERTED)); },
             AUDIO_CODEC_ES8311_ADDR);
+        g_baji_shutdown_codec = &codec;
         return &codec;
     }
     Display* GetDisplay() override { return display_; }
     Backlight* GetBacklight() override {
-        static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
+        static BajiBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
         return &backlight;
     }
     bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {

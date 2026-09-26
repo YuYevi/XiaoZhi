@@ -8,12 +8,14 @@
 #include <vector>
 
 #include "watch/watch_services.h"
+#include "device_state.h"
 // Owns navigation, page objects, overlays and asynchronous results.
 // Page implementations live in ui/pages; shared widgets live in watch_ui_widgets.cc.
 // All UI entry points require the display lock. Storage runs on Application.
 class WatchUi {
    public:
     enum class Page {
+        Boot,
         Standby,
         Menu,
         Chat,
@@ -69,6 +71,8 @@ class WatchUi {
     void ClearChatMessages();
     void SetEmotion(const char*);
     void SetSystemMessage(const char*, uint32_t duration_ms = 5000);
+    void UpdateBootState(DeviceState state);
+    bool IsBooting() const { return page_ == Page::Boot; }
     void SetAwake(bool);
     void ShowPowerMenu(bool show);
     bool IsPowerMenuOpen() const { return power_overlay_ && !power_transition_; }
@@ -96,7 +100,7 @@ class WatchUi {
     std::shared_ptr<AsyncState> async_;
     WatchSnapshot snapshot_;
     DeviceSnapshot device_;
-    Page page_ = Page::Standby, chat_return_ = Page::Standby, menu_destination_ = Page::Menu;
+    Page page_ = Page::Boot, chat_return_ = Page::Standby, menu_destination_ = Page::Menu;
     lv_obj_t *root_ = nullptr, *content_ = nullptr, *control_ = nullptr, *modal_ = nullptr,
              *reminder_ = nullptr, *toast_ = nullptr, *status_ = nullptr;
     lv_obj_t* page_scroll_ = nullptr;
@@ -110,6 +114,8 @@ class WatchUi {
     lv_obj_t *calendar_days_ = nullptr, *clock_minute_ = nullptr, *clock_colon_ = nullptr,
              *chat_timer_dot_ = nullptr, *settings_wifi_label_ = nullptr;
     lv_obj_t *wifi_loader_ = nullptr, *thinking_ = nullptr, *answer_cursor_ = nullptr;
+    lv_obj_t *boot_progress_ = nullptr, *boot_later_ = nullptr, *boot_message_ = nullptr,
+             *boot_status_label_ = nullptr;
     lv_obj_t *wifi_input_ = nullptr, *wifi_password_label_ = nullptr, *wifi_hint_ = nullptr,
              *wifi_eye_icon_ = nullptr, *wifi_join_ = nullptr, *wifi_join_icon_ = nullptr;
     lv_timer_t* animation_timer_ = nullptr;
@@ -128,6 +134,9 @@ class WatchUi {
     std::array<std::unique_ptr<uint8_t[]>, 3> wallpaper_data_;
     uint32_t asset_check_ = 0, wallpaper_tick_ = 0, toast_deadline_ = 0, reminder_token_ = 0,
              revision_ = 0, light_color_ = 0x9a91f2;
+    uint32_t boot_started_at_ = 0;
+    DeviceState boot_state_ = kDeviceStateUnknown;
+    bool boot_later_visible_ = false;
     int wallpaper_ = 0, remembered_volume_ = 50, remembered_brightness_ = 50;
     bool awake_ = true, blocked_ = false, swiped_ = false, control_visible_ = false, power_save_ = false,
          light_applied_ = false, torch_ = false;
@@ -136,7 +145,7 @@ class WatchUi {
     int control_start_y_ = 0, selected_date_offset_ = 0, alarm_drag_start_x_ = 0, date_drag_start_x_ = 0;
     lv_point_t press_{};
     WatchAlarm alarm_draft_;
-    std::string status_text_, chat_header_text_, user_text_, answer_text_, emotion_;
+    std::string status_text_, chat_header_text_, user_text_, answer_text_, emotion_, boot_status_, boot_message_text_;
     std::function<void()> wifi_scan_;
     std::function<void(const std::string&, const std::string&)> wifi_connect_;
     std::vector<WifiNetwork> wifi_networks_;
@@ -147,6 +156,8 @@ class WatchUi {
     void Navigate(Page);
     void Render();
     void RenderStandby();
+    void RenderBoot();
+    void RefreshBoot();
     void RenderMenu();
     lv_obj_t* MenuCard(int x, int y, int width, int height, uint32_t accent,
                       uint32_t shadow, Page destination);

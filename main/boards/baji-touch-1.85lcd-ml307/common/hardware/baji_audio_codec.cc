@@ -111,6 +111,11 @@ void BajiAudioCodec::ResetCodec() {
 }
 
 void BajiAudioCodec::UpdateDeviceState() {
+    // Disable the amplifier before closing the DAC or changing its clocks.
+    // The previous reverse order exposed the DAC power-down transient.
+    if ((!output_enabled_ || shutdown_prepared_) && set_pa_enabled_) {
+        set_pa_enabled_(false);
+    }
     if ((input_enabled_ || output_enabled_) && dev_ == nullptr) {
         esp_codec_dev_cfg_t dev_cfg = {
             .dev_type = ESP_CODEC_DEV_TYPE_IN_OUT,
@@ -141,7 +146,7 @@ void BajiAudioCodec::UpdateDeviceState() {
         dev_ = nullptr;
     }
     if (set_pa_enabled_) {
-        set_pa_enabled_(output_enabled_);
+        set_pa_enabled_(output_enabled_ && !shutdown_prepared_);
     }
 }
 
@@ -224,11 +229,42 @@ void BajiAudioCodec::EnableInput(bool enable) {
 
 void BajiAudioCodec::EnableOutput(bool enable) {
     std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (shutdown_prepared_) {
+        if (set_pa_enabled_) {
+            set_pa_enabled_(false);
+        }
+        return;
+    }
     if (enable == output_enabled_) {
         return;
     }
     AudioCodec::EnableOutput(enable);
     UpdateDeviceState();
+}
+
+void BajiAudioCodec::PrepareForShutdown() {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (shutdown_prepared_) {
+        return;
+    }
+    shutdown_prepared_ = true;
+
+    // Use the same lock as Write so an in-flight buffer completes before the
+    // mute barrier. Keep capture available until the application stops it.
+    if (dev_ != nullptr) {
+        // Use the codec mute control rather than changing output_volume_, so
+        // the user's persisted volume remains untouched across reboot.
+        const int result = esp_codec_dev_set_out_mute(dev_, true);
+        if (result != ESP_CODEC_DEV_OK) {
+            ESP_LOGW(kTag, "Codec mute failed during shutdown: %d", result);
+        }
+    }
+    output_enabled_ = false;
+    if (set_pa_enabled_) {
+        set_pa_enabled_(false);
+    }
+    // Do not close/reconfigure I2S here. A capture task may still be unwinding;
+    // keeping the clocks stable also avoids another DAC power transient.
 }
 
 int BajiAudioCodec::Read(int16_t* dest, int samples) {
@@ -265,7 +301,7 @@ int BajiAudioCodec::Write(const int16_t* data, int samples) {
     // Keep the device alive through playback while the audio power timer may
     // disable output. Read stays independent so duplex capture can continue.
     std::lock_guard<std::mutex> lock(data_if_mutex_);
-    if (!output_enabled_ || dev_ == nullptr || samples <= 0) {
+    if (shutdown_prepared_ || !output_enabled_ || dev_ == nullptr || samples <= 0) {
         return 0;
     }
 #if AUDIO_INPUT_USE_SILICON_MIC

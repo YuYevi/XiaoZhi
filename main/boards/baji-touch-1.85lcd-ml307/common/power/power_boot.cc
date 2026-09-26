@@ -1,7 +1,7 @@
 #include "power_manager.h"
 #include "config.h"
+#include "hardware/baji_backlight.h"
 #include "hardware/baji_display.h"
-#include "backlight.h"
 
 #include <driver/gpio.h>
 #include <driver/ledc.h>
@@ -14,6 +14,19 @@
 #include <nvs_flash.h>
 
 extern "C" void __real_app_main();
+
+static void EarlyBacklightOff(void)
+{
+    // Keep the panel dark until the board creates its first stable UI frame.
+    gpio_config_t io = {};
+    io.intr_type = GPIO_INTR_DISABLE;
+    io.mode = GPIO_MODE_OUTPUT;
+    io.pin_bit_mask = (1ULL << DISPLAY_BACKLIGHT_PIN);
+    io.pull_down_en = DISPLAY_BACKLIGHT_OUTPUT_INVERT ? GPIO_PULLDOWN_DISABLE : GPIO_PULLDOWN_ENABLE;
+    io.pull_up_en = DISPLAY_BACKLIGHT_OUTPUT_INVERT ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE;
+    ESP_ERROR_CHECK(gpio_config(&io));
+    ESP_ERROR_CHECK(gpio_set_level(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT ? 1 : 0));
+}
 
 static void InitPowerKeyPin(void)
 {
@@ -146,6 +159,7 @@ extern "C" void board_charging_only_main(void)
 
     LatchPowerControlOn();
 
+    BajiBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
     BajiDisplay* display = baji_185_create_lcd_display(true);
     if (display == nullptr) {
 
@@ -153,8 +167,7 @@ extern "C" void board_charging_only_main(void)
     }
 
     display->ShowChargingFullscreen(true);
-
-    PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
+    display->RefreshNow();
     backlight.SetBrightness(POWER_CHARGING_FULLSCREEN_BACKLIGHT);
 
     InitV5mDetectPin();
@@ -166,7 +179,7 @@ extern "C" void board_charging_only_main(void)
         // USB may have disappeared while the LCD was initializing.
         if (!IsV5mPresent()) {
             charging_rtc_clear_boot_flags();
-            display->ShowChargingFullscreen(false);
+            backlight.TurnOffImmediately();
             ChargingOnlyPowerOffDeepSleep();
         }
 
@@ -174,6 +187,7 @@ extern "C" void board_charging_only_main(void)
             hold_ms += poll_ms;
             if (hold_ms >= POWER_KEY_HOLD_MS_TO_BOOT) {
                 charging_rtc_clear_boot_flags();
+                backlight.TurnOffImmediately();
                 esp_restart();
             }
         } else {
@@ -186,6 +200,7 @@ extern "C" void board_charging_only_main(void)
 
 // The board's linker option redirects app_main here, leaving main/main.cc intact.
 extern "C" void __wrap_app_main() {
+    EarlyBacklightOff();
     rtc_gpio_deinit(Power_Dec);
     if (board_should_charging_only_boot()) {
         board_charging_only_main();

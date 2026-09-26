@@ -23,8 +23,12 @@ public:
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override;
     void UpdateStatusBar(bool update_all = false) override;
     void ShowChargingFullscreen(bool show);
+    void SetFirstFrameCallback(std::function<void()> callback);
+    void RefreshNow();
 
     void SetWatchActionCallback(WatchUi::ActionCallback callback);
+    void UpdateBootState(DeviceState state);
+    bool IsWatchBooting();
     void SetWatchAwake(bool awake);
     void TickWatch(const WatchUi::DeviceSnapshot& snapshot);
     void ShowWatchChat();
@@ -47,6 +51,7 @@ private:
     const bool quiet_boot_;
     bool watch_awake_ = true;
     std::unique_ptr<WatchUi> watch_ui_;
+    std::function<void()> first_frame_callback_;
     WatchUi::ActionCallback watch_action_;
     std::function<void()> watch_wifi_scan_;
     std::function<void(std::string, std::string)> watch_wifi_connect_;

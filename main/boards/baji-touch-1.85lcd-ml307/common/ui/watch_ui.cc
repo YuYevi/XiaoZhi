@@ -43,6 +43,7 @@ void WatchUi::Emit(Action a, int v) {
 void WatchUi::Create() {
     if (root_)
         return;
+    boot_started_at_ = lv_tick_get();
     snapshot_ = services_.Snapshot();
     root_ = Box(lv_display_get_screen_active(display_), 0, 0, 360, 360, kBg);
     lv_obj_add_flag(root_, LV_OBJ_FLAG_CLICKABLE);
@@ -89,7 +90,7 @@ void WatchUi::SetFonts(const lv_font_t* f, const lv_font_t* i) {
         Render();
         if (c)
             ToggleControl(true);
-        RefreshReminder();
+        if (!IsBooting()) RefreshReminder();
     }
 }
 
@@ -126,6 +127,7 @@ void WatchUi::Render() {
     status_ = clock_ = date_ = user_label_ = answer_label_ = chat_header_ = chat_mic_ = chat_timer_ =
         wallpaper_obj_ = hour_ = minute_ = timer_label_ = timer_progress_ = calendar_strip_ =
             alarm_drag_row_ = nullptr;
+    boot_progress_ = boot_later_ = boot_message_ = boot_status_label_ = nullptr;
     chat_header_text_.clear();
     wifi_loader_ = thinking_ = answer_cursor_ = nullptr;
     wifi_input_ = wifi_password_label_ = wifi_hint_ = wifi_eye_icon_ = wifi_join_ = wifi_join_icon_ = nullptr;
@@ -135,6 +137,9 @@ void WatchUi::Render() {
     thinking_dots_.fill(nullptr);
     // Central page routing; page implementations live in pages/.
     switch (page_) {
+        case Page::Boot:
+            RenderBoot();
+            break;
         case Page::Standby:
             RenderStandby();
             break;
@@ -169,7 +174,7 @@ void WatchUi::Render() {
             RenderLightstick();
             break;
     }
-    RenderStatus();
+    if (!IsBooting()) RenderStatus();
     if (page_scroll_ && scroll_y) {
         lv_obj_update_layout(page_scroll_);
         // LVGL clamps the saved offset if deleting a row shortened the list.
@@ -262,7 +267,7 @@ void WatchUi::UpdateDeviceSnapshot(const DeviceSnapshot& d) {
     }
     if (device_.volume > 0)
         remembered_volume_ = device_.volume;
-    if (changed && content_)
+    if (changed && content_ && !IsBooting())
         RenderStatus();
     if (chat_changed) RefreshMicrophone();
 }
@@ -327,6 +332,7 @@ void WatchUi::GoBack() {
         return;
     }
     switch (page_) {
+        case Page::Boot:
         case Page::Standby:
             break;
         case Page::Menu:
@@ -356,7 +362,7 @@ void WatchUi::GoBack() {
 }
 
 void WatchUi::Gesture(lv_event_t* e) {
-    if (!awake_ || power_overlay_)
+    if (!awake_ || power_overlay_ || IsBooting())
         return;
     auto code = lv_event_get_code(e);
     if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING && code != LV_EVENT_RELEASED &&
@@ -505,6 +511,10 @@ void WatchUi::Gesture(lv_event_t* e) {
 void WatchUi::Tick() {
     if (!root_)
         return;
+    if (IsBooting()) {
+        UpdateBootState(Application::GetInstance().GetDeviceState());
+        return;
+    }
     bool done = false, ok = false;
     bool same_navigation = false;
     Page dest = page_;
@@ -557,9 +567,9 @@ void WatchUi::Tick() {
     if (!rebuilt && page_ == Page::Countdown && (old.countdown.active != snapshot_.countdown.active ||
                                      old.countdown.paused != snapshot_.countdown.paused))
         Render();
-    RefreshReminder();
-    if (!awake_ || power_overlay_)
+    if (!awake_ || power_overlay_ || IsBooting())
         return;
+    RefreshReminder();
     RefreshDynamic();
     LoadWallpapers();
     uint32_t now = lv_tick_get();
