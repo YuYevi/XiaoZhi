@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include "battery_monitor.h"
+#include "low_voltage_protection.h"
 
 #include <driver/gpio.h>
 #include <esp_timer.h>
@@ -14,6 +15,9 @@
 extern "C" void charging_rtc_set_usb_shutdown_flag(void);
 extern "C" void charging_rtc_clear_boot_flags(void);
 extern "C" bool charging_rtc_usb_shutdown_next_boot(void);
+extern "C" void charging_rtc_set_low_voltage_flag(void);
+extern "C" void charging_rtc_clear_low_voltage_flag(void);
+extern "C" bool charging_rtc_low_voltage_shutdown(void);
 
 enum class PowerUiHint {
     ShuttingDown,
@@ -32,6 +36,7 @@ private:
     std::unique_ptr<BajiBatteryMonitor> battery_;
     bool usb_present_ = false;
     bool is_low_battery_ = false;
+    baji::LowVoltageProtection low_voltage_protection_;
 
     bool key_raw_pressed_ = false;
     bool key_pressed_ = false;
@@ -42,6 +47,7 @@ private:
     int64_t shutdown_released_since_ = 0;
     std::atomic<bool> shutdown_requested_{false};
     std::atomic<bool> emergency_shutdown_{false};
+    std::atomic<int64_t> low_voltage_shutdown_deadline_us_{0};
 
     std::function<void(PowerUiHint)> on_power_ui_;
     std::function<void(PowerKeyEvent)> on_power_key_;
@@ -53,6 +59,7 @@ private:
     static void ShutdownTask(void* arg);
     void RememberUsbShutdown();
     void BeginEmergencyShutdown();
+    void RunLowVoltageShutdown(int millivolts);
     void RunShutdownSequence();
 
 public:

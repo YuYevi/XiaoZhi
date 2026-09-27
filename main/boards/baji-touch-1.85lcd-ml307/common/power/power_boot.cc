@@ -1,5 +1,6 @@
 #include "power_manager.h"
 #include "battery_monitor.h"
+#include "low_voltage_protection.h"
 #include "config.h"
 #include "hardware/baji_backlight.h"
 #include "hardware/baji_display.h"
@@ -102,9 +103,9 @@ static void ChargingOnlyPowerOffDeepSleep(void)
     }
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    esp_err_t err = esp_sleep_enable_ext1_wakeup((1ULL << Power_Dec), ESP_EXT1_WAKEUP_ANY_LOW);
-    if (err != ESP_OK) {
-        esp_sleep_enable_ext0_wakeup(Power_Dec, 0);
+    esp_sleep_enable_ext0_wakeup(Power_Dec, 0);
+    if (!IsV5mPresent()) {
+        esp_sleep_enable_ext1_wakeup(1ULL << POWER_USB_IN, ESP_EXT1_WAKEUP_ANY_HIGH);
     }
 
     esp_deep_sleep_start();
@@ -127,6 +128,7 @@ extern "C" bool board_should_charging_only_boot(void)
     }
 
     esp_reset_reason_t rr = esp_reset_reason();
+    if (v5m && charging_rtc_low_voltage_shutdown()) return true;
     if (rr == ESP_RST_SW) {
         charging_rtc_clear_boot_flags();
         return false;
@@ -172,7 +174,7 @@ extern "C" void board_charging_only_main(void)
 
     display->ShowChargingFullscreen(true);
     const auto initial_battery = battery.GetSnapshot();
-    display->UpdateChargingState(initial_battery.level, initial_battery.usb,
+    display->UpdateChargingState(initial_battery.usb,
         initial_battery.charging, initial_battery.full);
     display->RefreshNow();
     backlight.SetBrightness(POWER_CHARGING_FULLSCREEN_BACKLIGHT);
@@ -183,6 +185,7 @@ extern "C" void board_charging_only_main(void)
     int hold_ms = 0;
     int64_t unplugged_at_ms = -1;
     int64_t battery_poll_at_ms = esp_timer_get_time() / 1000;
+    int64_t recovered_at_ms = -1;
 
     for (;;) {
         const int64_t now_ms = esp_timer_get_time() / 1000;
@@ -195,11 +198,28 @@ extern "C" void board_charging_only_main(void)
             ChargingOnlyPowerOffDeepSleep();
         }
 
+        const auto state = battery.GetSnapshot();
+        if (charging_rtc_low_voltage_shutdown()) {
+            if (state.sample_valid &&
+                state.sample_millivolts >= baji::LowVoltageProtection::kChargingRestartMv) {
+                if (recovered_at_ms < 0) recovered_at_ms = now_ms;
+            } else {
+                recovered_at_ms = -1;
+            }
+        }
+
         if (POWER_KEY_PRESSED()) {
             hold_ms += poll_ms;
             if (hold_ms >= POWER_KEY_HOLD_MS_TO_BOOT) {
+                if (charging_rtc_low_voltage_shutdown() &&
+                    (recovered_at_ms < 0 ||
+                     now_ms - recovered_at_ms < baji::LowVoltageProtection::kChargingRestartStableMs)) {
+                    vTaskDelay(pdMS_TO_TICKS(poll_ms));
+                    continue;
+                }
                 battery.SaveState();
                 charging_rtc_clear_boot_flags();
+                charging_rtc_clear_low_voltage_flag();
                 backlight.TurnOffImmediately();
                 esp_restart();
             }
@@ -211,7 +231,7 @@ extern "C" void board_charging_only_main(void)
             battery_poll_at_ms = now_ms;
             battery.Poll();
             const auto state = battery.GetSnapshot();
-            display->UpdateChargingState(state.level, state.usb, state.charging, state.full);
+            display->UpdateChargingState(state.usb, state.charging, state.full);
         }
 
         vTaskDelay(pdMS_TO_TICKS(poll_ms));
@@ -228,6 +248,9 @@ extern "C" void __wrap_app_main() {
 
     const auto cause = esp_sleep_get_wakeup_cause();
     if (cause == ESP_SLEEP_WAKEUP_EXT0 || cause == ESP_SLEEP_WAKEUP_EXT1) {
+        if (cause == ESP_SLEEP_WAKEUP_EXT1 && IsV5mPresent()) {
+            board_charging_only_main();
+        }
         // Count the press which actually woke the board; do not require a second press.
         int held_ms = 0;
         while (POWER_KEY_PRESSED() && held_ms < POWER_KEY_HOLD_MS_TO_BOOT) {
@@ -240,6 +263,24 @@ extern "C" void __wrap_app_main() {
         }
         gpio_set_direction(Power_Control, GPIO_MODE_OUTPUT);
         gpio_set_level(Power_Control, 1);
+    }
+    if (!IsV5mPresent()) {
+        // A fresh ADC sample is needed before screen, modem and audio are powered.
+        // A fully power-gated chip cannot rely on an RTC shutdown marker alone.
+        LatchPowerControlOn();
+        BajiBatteryMonitor startup_battery;
+        startup_battery.Poll();
+        const auto sample = startup_battery.GetSnapshot();
+        const int restart_mv = charging_rtc_low_voltage_shutdown() ?
+            baji::LowVoltageProtection::kRestartMv : 3500;
+        if (sample.sample_valid && sample.sample_millivolts < restart_mv) {
+            charging_rtc_set_low_voltage_flag();
+            ChargingOnlyPowerOffDeepSleep();
+        }
+        if (charging_rtc_low_voltage_shutdown() && !sample.sample_valid) {
+            ChargingOnlyPowerOffDeepSleep();
+        }
+        charging_rtc_clear_low_voltage_flag();
     }
     __real_app_main();
 }

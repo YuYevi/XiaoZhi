@@ -1,14 +1,13 @@
 #include "baji_display.h"
 
-#include "assets/lang_config.h"
 #include "assets.h"
 #include "config.h"
 #include "lvgl_theme.h"
 #include "system_info.h"
+#include "resources/charging_icon.h"
 
 #include <esp_lcd_touch_cst816s.h>
 #include <esp_lvgl_port.h>
-#include <material_symbols.h>
 #include <algorithm>
 #include <cstring>
 #include <utility>
@@ -315,17 +314,13 @@ void BajiDisplay::OnTouchPressed() {
 void BajiDisplay::RefreshChargingStyle() {
     if (!charging_fullscreen_) return;
     const lv_font_t* text_font = LV_FONT_DEFAULT;
-    const lv_font_t* icon_font = LV_FONT_DEFAULT;
     if (auto theme = static_cast<LvglTheme*>(current_theme_)) {
         text_font = theme->text_font()->font();
-        icon_font = theme->large_icon_font()->font();
     }
     // Rebind on theme changes before a replaced runtime font is released.
     lv_obj_set_style_text_font(charging_fullscreen_, text_font, 0);
-    lv_obj_set_style_text_font(charging_icon_, icon_font, 0);
-    lv_obj_align(charging_icon_, LV_ALIGN_CENTER, 0, -lv_font_get_line_height(text_font) - 16);
-    lv_obj_align_to(charging_level_, charging_icon_, LV_ALIGN_OUT_BOTTOM_MID, 0, 12);
-    lv_obj_align_to(charging_caption_, charging_level_, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+    lv_obj_align(charging_icon_, LV_ALIGN_CENTER, 0, -lv_font_get_line_height(text_font));
+    lv_obj_align_to(charging_caption_, charging_icon_, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
 }
 
 void BajiDisplay::ShowChargingFullscreen(bool show) {
@@ -335,6 +330,9 @@ void BajiDisplay::ShowChargingFullscreen(bool show) {
         return;
     }
     if (!charging_fullscreen_) {
+        auto& services = WatchServices::GetInstance();
+        services.Initialize();
+        charging_english_ = services.Snapshot().settings.language != 0;
         LoadPackagedTextFont();
         auto screen = lv_display_get_screen_active(display_);
         charging_fullscreen_ = lv_obj_create(screen);
@@ -348,13 +346,12 @@ void BajiDisplay::ShowChargingFullscreen(bool show) {
         lv_obj_center(charging_fullscreen_);
         lv_obj_remove_flag(charging_fullscreen_, LV_OBJ_FLAG_SCROLLABLE);
 
-        charging_icon_ = lv_label_create(charging_fullscreen_);
-        lv_label_set_text(charging_icon_, MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_BOLT);
-        lv_obj_set_style_text_color(charging_icon_, lv_color_hex(0x44de83), 0);
-        charging_level_ = lv_label_create(charging_fullscreen_);
-        lv_label_set_text(charging_level_, "--%");
+        charging_icon_ = lv_image_create(charging_fullscreen_);
+        lv_image_set_src(charging_icon_, &baji_charging_icon);
+        lv_obj_set_style_image_recolor(charging_icon_, lv_color_white(), 0);
+        lv_obj_set_style_image_recolor_opa(charging_icon_, LV_OPA_COVER, 0);
         charging_caption_ = lv_label_create(charging_fullscreen_);
-        lv_label_set_text(charging_caption_, Lang::Strings::BATTERY_CHARGING);
+        lv_label_set_text(charging_caption_, charging_english_ ? "Charging" : "正在充电");
         lv_obj_set_width(charging_caption_, width_ * 85 / 100);
         lv_label_set_long_mode(charging_caption_, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_align(charging_caption_, LV_TEXT_ALIGN_CENTER, 0);
@@ -364,15 +361,14 @@ void BajiDisplay::ShowChargingFullscreen(bool show) {
     lv_obj_move_foreground(charging_fullscreen_);
 }
 
-void BajiDisplay::UpdateChargingState(int level, bool usb, bool charging, bool full) {
+void BajiDisplay::UpdateChargingState(bool usb, bool charging, bool full) {
     DisplayLockGuard lock(this);
     if (!charging_fullscreen_) return;
-    if (level < 0) lv_label_set_text(charging_level_, "--%");
-    else lv_label_set_text_fmt(charging_level_, "%d%%", std::clamp(level, 0, 100));
-    lv_label_set_text(charging_icon_, usb ? MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_BOLT
-                                        : MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_FULL);
-    lv_obj_set_style_text_color(charging_icon_, usb ? lv_color_hex(0x44de83) : lv_color_white(), 0);
-    lv_label_set_text(charging_caption_, full ? Lang::Strings::BATTERY_FULL
-        : charging ? Lang::Strings::BATTERY_CHARGING : "\u5df2\u63a5\u7535\u6e90");
+    const char* caption = full && usb
+        ? (charging_english_ ? "Charging complete" : "充电完成")
+        : charging ? (charging_english_ ? "Charging" : "正在充电")
+        : (charging_english_ ? "Power connected" : "已接电源");
+    if (std::strcmp(lv_label_get_text(charging_caption_), caption) == 0) return;
+    lv_label_set_text(charging_caption_, caption);
     RefreshChargingStyle();
 }

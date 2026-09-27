@@ -1,4 +1,5 @@
 #include "../power/battery_estimator.h"
+#include "../power/low_voltage_protection.h"
 #include <cstdlib>
 #include <iostream>
 
@@ -97,6 +98,37 @@ void CheckRestart(const Device& source, int fresh_mv, int expected, bool softwar
 }
 
 int main() {
+    baji::LowVoltageProtection low_voltage;
+    for (int ms = 0; ms < 15000; ms += 1000) {
+        Check(!low_voltage.Update(true, false, 3400, ms, ms),
+            "3.4V cutoff requires fifteen seconds of fresh samples");
+    }
+    Check(low_voltage.Update(true, false, 3400, 15000, 15000),
+        "sustained 3.4V causes protective shutdown");
+    low_voltage.Reset();
+    Check(!low_voltage.Update(true, false, 3300, 20000, 20000),
+        "3.3V emergency cutoff requires confirmation");
+    Check(!low_voltage.Update(true, false, 3300, 21000, 21000),
+        "3.3V emergency cutoff does not trigger at one second");
+    Check(!low_voltage.Update(true, false, 3300, 22000, 22000),
+        "3.3V emergency cutoff does not trigger at two seconds");
+    Check(low_voltage.Update(true, false, 3300, 23000, 23000),
+        "sustained 3.3V triggers emergency cutoff at three seconds");
+    low_voltage.Reset();
+    Check(!low_voltage.Update(true, false, 3300, 30000, 30000),
+        "critical timer begins with a valid sample");
+    Check(!low_voltage.Update(true, true, 3300, 31000, 31000),
+        "USB immediately cancels low-voltage cutoff");
+    Check(!low_voltage.Update(true, false, 3300, 32000, 32000),
+        "unplug starts a fresh low-voltage confirmation");
+    Check(!low_voltage.Update(true, false, 3300, 32000, 34000),
+        "duplicate or stale samples cannot advance low-voltage timers");
+    Check(!low_voltage.Update(true, false, 3300, 35000, 35000),
+        "missing samples reset low-voltage confirmation");
+    Check(!low_voltage.Update(true, false, 3300, 36000, 36000),
+        "low-voltage recovery remains unconfirmed after ADC outage");
+    Check(!low_voltage.Update(true, false, 3450, 37000, 37000),
+        "voltage recovery resets low-voltage cutoff");
     using baji::BatteryEstimator;
     float previous = -1;
     for (int mv = 2700; mv <= 4400; ++mv) {

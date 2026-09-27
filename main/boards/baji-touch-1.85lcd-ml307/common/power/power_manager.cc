@@ -9,25 +9,27 @@
 #include <esp_attr.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 #define CHARGING_RTC_MAGIC 0x43485247u
 #define FLAG_USB_SHUTDOWN_NEXT 0x01u
+#define FLAG_LOW_VOLTAGE_SHUTDOWN 0x02u
 
 RTC_DATA_ATTR static uint32_t s_rtc_magic;
 RTC_DATA_ATTR static uint32_t s_rtc_flags;
 
 extern "C" void charging_rtc_set_usb_shutdown_flag(void)
 {
+    if (s_rtc_magic != CHARGING_RTC_MAGIC) s_rtc_flags = 0;
     s_rtc_magic = CHARGING_RTC_MAGIC;
     s_rtc_flags |= FLAG_USB_SHUTDOWN_NEXT;
 }
 
 extern "C" void charging_rtc_clear_boot_flags(void)
 {
-    s_rtc_magic = 0;
-    s_rtc_flags = 0;
+    if (s_rtc_magic == CHARGING_RTC_MAGIC) s_rtc_flags &= ~FLAG_USB_SHUTDOWN_NEXT;
 }
 
 extern "C" bool charging_rtc_usb_shutdown_next_boot(void)
@@ -35,11 +37,30 @@ extern "C" bool charging_rtc_usb_shutdown_next_boot(void)
     return (s_rtc_magic == CHARGING_RTC_MAGIC) && (s_rtc_flags & FLAG_USB_SHUTDOWN_NEXT);
 }
 
+extern "C" void charging_rtc_set_low_voltage_flag(void) {
+    if (s_rtc_magic != CHARGING_RTC_MAGIC) s_rtc_flags = 0;
+    s_rtc_magic = CHARGING_RTC_MAGIC;
+    s_rtc_flags |= FLAG_LOW_VOLTAGE_SHUTDOWN;
+}
+
+extern "C" void charging_rtc_clear_low_voltage_flag(void) {
+    if (s_rtc_magic == CHARGING_RTC_MAGIC) s_rtc_flags &= ~FLAG_LOW_VOLTAGE_SHUTDOWN;
+}
+
+extern "C" bool charging_rtc_low_voltage_shutdown(void) {
+    return s_rtc_magic == CHARGING_RTC_MAGIC && (s_rtc_flags & FLAG_LOW_VOLTAGE_SHUTDOWN);
+}
+
 void PowerManager::PowrSwitch() {
     PollPowerKey(POWER_KEY_PRESSED(), esp_timer_get_time());
 }
 
 void PowerManager::PollPowerKey(bool pressed, int64_t now) {
+    const int64_t cutoff_deadline = low_voltage_shutdown_deadline_us_.load();
+    if (cutoff_deadline && now >= cutoff_deadline && !emergency_shutdown_) {
+        // The audio mutex or I2C must never prevent a critical-voltage cutoff.
+        BeginEmergencyShutdown();
+    }
     if (emergency_shutdown_) {
         // A failed task allocation must not block the shared ESP timer
         // task while the user still holds the power button.
@@ -50,8 +71,10 @@ void PowerManager::PollPowerKey(bool pressed, int64_t now) {
         if (!shutdown_released_since_) shutdown_released_since_ = now;
         if (now - shutdown_released_since_ < POWER_KEY_STABLE_RELEASE_MS * 1000) return;
         esp_timer_stop(power_timer_handle_);
-        const auto err = esp_sleep_enable_ext1_wakeup(1ULL << Power_Dec, ESP_EXT1_WAKEUP_ANY_LOW);
-        if (err != ESP_OK) {
+        if (charging_rtc_low_voltage_shutdown()) {
+            esp_sleep_enable_ext0_wakeup(Power_Dec, 0);
+            esp_sleep_enable_ext1_wakeup(1ULL << POWER_USB_IN, ESP_EXT1_WAKEUP_ANY_HIGH);
+        } else if (esp_sleep_enable_ext1_wakeup(1ULL << Power_Dec, ESP_EXT1_WAKEUP_ANY_LOW) != ESP_OK) {
             esp_sleep_enable_ext0_wakeup(Power_Dec, 0);
         }
         esp_deep_sleep_start();
@@ -99,6 +122,13 @@ void PowerManager::CheckBatteryStatus() {
             on_charging_status_changed_(usb_present_);
         }
     }
+    const bool usb_present = state.usb ||
+        gpio_get_level(charging_pin_) == POWER_USB_VBUS_ACTIVE_LEVEL;
+    if (low_voltage_protection_.Update(state.sample_valid, usb_present,
+            state.sample_millivolts, state.sample_at_ms, esp_timer_get_time() / 1000)) {
+        RunLowVoltageShutdown(state.sample_millivolts);
+        return;
+    }
     if (!state.valid) return;
     const bool low = is_low_battery_ ? state.level < 25 || state.millivolts < 3550 :
         state.level <= 20 || state.millivolts <= 3400;
@@ -138,6 +168,37 @@ void PowerManager::RememberUsbShutdown() {
 #endif
         charging_rtc_set_usb_shutdown_flag();
     }
+}
+
+void PowerManager::RunLowVoltageShutdown(int millivolts) {
+    if (shutdown_requested_.exchange(true)) return;
+    ESP_LOGW("PowerManager", "Sustained low VBAT=%dmV; powering off", millivolts);
+    charging_rtc_set_low_voltage_flag();
+    low_voltage_shutdown_deadline_us_ = esp_timer_get_time() + 500000;
+    ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+    gpio_set_level(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT ? 1 : 0);
+    auto& board = Board::GetInstance();
+    if (auto* codec = static_cast<BajiAudioCodec*>(board.GetAudioCodec())) {
+        codec->PrepareForShutdown();
+    }
+    if (auto* backlight = static_cast<BajiBacklight*>(board.GetBacklight())) {
+        backlight->TurnOffImmediately();
+    }
+    if (power_timer_handle_) esp_timer_stop(power_timer_handle_);
+    low_voltage_shutdown_deadline_us_ = 0;
+    gpio_set_level(Power_Control, 0);
+
+    gpio_config_t wake_in = {};
+    wake_in.intr_type = GPIO_INTR_DISABLE;
+    wake_in.mode = GPIO_MODE_INPUT;
+    wake_in.pin_bit_mask = 1ULL << Power_Dec;
+    wake_in.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&wake_in);
+    while (POWER_KEY_PRESSED()) vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(80));
+    esp_sleep_enable_ext0_wakeup(Power_Dec, 0);
+    esp_sleep_enable_ext1_wakeup(1ULL << POWER_USB_IN, ESP_EXT1_WAKEUP_ANY_HIGH);
+    esp_deep_sleep_start();
 }
 
 void PowerManager::BeginEmergencyShutdown() {

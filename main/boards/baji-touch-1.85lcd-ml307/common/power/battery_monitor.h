@@ -11,6 +11,9 @@ public:
     struct Snapshot {
         int level = -1;
         int millivolts = 0;
+        int sample_millivolts = 0;
+        int64_t sample_at_ms = -1;
+        bool sample_valid = false;
         int correction_mv = 0;
         float precise_level = -1;
         float model_percent = -1;
@@ -66,6 +69,9 @@ private:
     bool usb_ = false, charging_ = false;
     bool last_full_ = false;
     bool last_display_floor_active_ = false;
-    int64_t sample_at_ms_ = -5000, log_at_ms_ = -60000, save_at_ms_ = 0;
+    int64_t sample_at_ms_ = -5000, estimator_sample_at_ms_ = -5000;
+    int64_t log_at_ms_ = -60000, save_at_ms_ = 0;
+    int sample_millivolts_ = 0;
+    int64_t last_valid_sample_at_ms_ = -1;
     unsigned errors_ = 0;
 };

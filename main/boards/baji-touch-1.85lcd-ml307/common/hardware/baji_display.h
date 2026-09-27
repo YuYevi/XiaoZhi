@@ -23,7 +23,7 @@ public:
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override;
     void UpdateStatusBar(bool update_all = false) override;
     void ShowChargingFullscreen(bool show);
-    void UpdateChargingState(int level, bool usb, bool charging, bool full);
+    void UpdateChargingState(bool usb, bool charging, bool full);
     void SetFirstFrameCallback(std::function<void()> callback);
     void RefreshNow();
 
@@ -58,8 +58,8 @@ private:
     std::function<void(std::string, std::string)> watch_wifi_connect_;
     lv_obj_t* charging_fullscreen_ = nullptr;
     lv_obj_t* charging_icon_ = nullptr;
-    lv_obj_t* charging_level_ = nullptr;
     lv_obj_t* charging_caption_ = nullptr;
+    bool charging_english_ = false;
 
     void LoadPackagedTextFont();
     void RefreshChargingStyle();

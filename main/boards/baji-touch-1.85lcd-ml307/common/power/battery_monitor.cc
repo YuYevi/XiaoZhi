@@ -151,7 +151,7 @@ bool BajiBatteryMonitor::ReadMillivolts(int& mv) {
     int total = 0;
     for (size_t i = 4; i < 12; ++i) total += samples[i];
     mv = total / 8;
-    if (mv < 2800 || mv > 4350) {
+    if (mv < 2500 || mv > 4350) {
         if (++errors_ == 1 || errors_ % 12 == 0) ESP_LOGW(kTag, "Implausible VBAT=%dmV; check divider/battery", mv);
         return false;
     }
@@ -171,6 +171,10 @@ void BajiBatteryMonitor::Publish(int64_t now_ms) {
         next.anchor_curve = anchor.curve;
     }
     next.millivolts = estimator_.Millivolts();
+    next.sample_millivolts = sample_millivolts_;
+    next.sample_at_ms = last_valid_sample_at_ms_;
+    next.sample_valid = last_valid_sample_at_ms_ >= 0 &&
+        now_ms - last_valid_sample_at_ms_ <= 7000;
     next.correction_mv = estimator_.CorrectionMillivolts();
     next.usb = usb_;
     next.charging = charging_;
@@ -253,10 +257,20 @@ void BajiBatteryMonitor::Poll() {
     estimator_.SetPower(usb_, charging_, now);
     // Keep post-insertion readings out of the pre-insertion voltage baseline
     // while the GPIO candidate has not yet passed its debounce window.
-    if (!usb_input_.Pending() && !charge_input_.Pending() && now - sample_at_ms_ >= 5000) {
+    const int sample_interval_ms = !usb_ && sample_millivolts_ <= 3500 &&
+        last_valid_sample_at_ms_ >= 0 ? 1000 : 5000;
+    if (!usb_input_.Pending() && !charge_input_.Pending() &&
+        now - sample_at_ms_ >= sample_interval_ms) {
         sample_at_ms_ = now;
         int mv = 0;
-        if (ReadMillivolts(mv)) estimator_.Observe(mv, now);
+        if (ReadMillivolts(mv)) {
+            sample_millivolts_ = mv;
+            last_valid_sample_at_ms_ = now;
+            if (mv >= 2800 && now - estimator_sample_at_ms_ >= 5000) {
+                estimator_.Observe(mv, now);
+                estimator_sample_at_ms_ = now;
+            }
+        }
     }
     Publish(now);
     if (cable_changed) {
