@@ -2,6 +2,7 @@
 #include "config.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <freertos/task.h>
 
 #include <algorithm>
@@ -19,6 +20,12 @@
 
 namespace {
 constexpr char kTag[] = "BajiAudioCodec";
+// Match the native audio inactivity timeout. Short prompts and alarm tones
+// keep the PA ready; the deadline starts after the last PCM write returns.
+constexpr int64_t kPaIdleUs = 15000000;
+// LM4890 needs up to 220 ms after shutdown is released at 5 V. The board's
+// 1 uF BYPASS capacitor also relies on this ramp to suppress turn-on pops.
+constexpr int kPaWakeMs = 250;
 #if AUDIO_INPUT_USE_SILICON_MIC
 constexpr int kSampleBits = 32;
 static_assert(AUDIO_MIC_PCM_RIGHT_SHIFT >= 0 && AUDIO_MIC_PCM_RIGHT_SHIFT < 32,
@@ -113,8 +120,9 @@ void BajiAudioCodec::ResetCodec() {
 void BajiAudioCodec::UpdateDeviceState() {
     // Disable the amplifier before closing the DAC or changing its clocks.
     // The previous reverse order exposed the DAC power-down transient.
-    if ((!output_enabled_ || shutdown_prepared_) && set_pa_enabled_) {
+    if ((!output_enabled_ || shutdown_prepared_) && pa_enabled_ && set_pa_enabled_) {
         set_pa_enabled_(false);
+        pa_enabled_ = false;
     }
     if ((input_enabled_ || output_enabled_) && dev_ == nullptr) {
         esp_codec_dev_cfg_t dev_cfg = {
@@ -144,9 +152,6 @@ void BajiAudioCodec::UpdateDeviceState() {
         ESP_ERROR_CHECK(esp_codec_dev_close(dev_));
         esp_codec_dev_delete(dev_);
         dev_ = nullptr;
-    }
-    if (set_pa_enabled_) {
-        set_pa_enabled_(output_enabled_ && !shutdown_prepared_);
     }
 }
 
@@ -240,6 +245,28 @@ void BajiAudioCodec::EnableOutput(bool enable) {
     }
     AudioCodec::EnableOutput(enable);
     UpdateDeviceState();
+    // Begin the ramp while the native service decodes/queues the first sound.
+    if (enable) StartAmplifier();
+}
+
+void BajiAudioCodec::StartAmplifier() {
+    if (pa_enabled_ || !set_pa_enabled_ || shutdown_prepared_) return;
+    set_pa_enabled_(true);
+    pa_enabled_ = true;
+    last_output_us_ = esp_timer_get_time();
+    pa_ready_at_us_ = last_output_us_ + int64_t(kPaWakeMs) * 1000;
+    ESP_LOGI(kTag, "Amplifier enabled for playback");
+}
+
+void BajiAudioCodec::PollOutputPower() {
+    // The UI/application task must never wait for a blocking I2S write. Only
+    // gate the external amplifier: native duplex capture still needs TX clocks.
+    std::unique_lock<std::mutex> lock(data_if_mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || !pa_enabled_ || !set_pa_enabled_) return;
+    if (esp_timer_get_time() - last_output_us_ < kPaIdleUs) return;
+    set_pa_enabled_(false);
+    pa_enabled_ = false;
+    ESP_LOGI(kTag, "Amplifier idle; duplex clocks retained");
 }
 
 void BajiAudioCodec::PrepareForShutdown() {
@@ -262,6 +289,7 @@ void BajiAudioCodec::PrepareForShutdown() {
     output_enabled_ = false;
     if (set_pa_enabled_) {
         set_pa_enabled_(false);
+        pa_enabled_ = false;
     }
     // Do not close/reconfigure I2S here. A capture task may still be unwinding;
     // keeping the clocks stable also avoids another DAC power transient.
@@ -304,16 +332,27 @@ int BajiAudioCodec::Write(const int16_t* data, int samples) {
     if (shutdown_prepared_ || !output_enabled_ || dev_ == nullptr || samples <= 0) {
         return 0;
     }
+    StartAmplifier();
+    const int64_t remaining_us = pa_ready_at_us_ - esp_timer_get_time();
+    if (remaining_us > 0) {
+        // Round up to whole RTOS ticks: truncation can shorten the chip's ramp
+        // below its data-sheet maximum and clip the first PCM block.
+        constexpr int64_t kTickUs = portTICK_PERIOD_MS * 1000;
+        vTaskDelay((remaining_us + kTickUs - 1) / kTickUs);
+    }
+    int written = 0;
 #if AUDIO_INPUT_USE_SILICON_MIC
     output_buffer_.resize(samples);
     for (int i = 0; i < samples; ++i) {
         // Multiplication is defined for negative PCM values as well.
         output_buffer_[i] = static_cast<int32_t>(data[i]) * 65536;
     }
-    return esp_codec_dev_write(dev_, output_buffer_.data(),
+    written = esp_codec_dev_write(dev_, output_buffer_.data(),
         samples * sizeof(int32_t)) == ESP_OK ? samples : 0;
 #else
-    return esp_codec_dev_write(dev_, const_cast<int16_t*>(data),
+    written = esp_codec_dev_write(dev_, const_cast<int16_t*>(data),
         samples * sizeof(int16_t)) == ESP_OK ? samples : 0;
 #endif
+    last_output_us_ = esp_timer_get_time();
+    return written;
 }

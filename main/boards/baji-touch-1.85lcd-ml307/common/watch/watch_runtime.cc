@@ -538,6 +538,7 @@ void WatchRuntime::UpdateReminder(const WatchSnapshot& snapshot, int64_t now) {
 
 void WatchRuntime::Tick() {
     auto& app = Application::GetInstance();
+    static_cast<BajiAudioCodec*>(board_.GetAudioCodec())->PollOutputPower();
     const int64_t now = esp_timer_get_time();
     if (power_transition_) {
         ContinueStopChat();
@@ -568,7 +569,11 @@ void WatchRuntime::Tick() {
     if (!ScreenCanSleep(state) || (!snapshot.reminders.empty() && !reminder_timed_out_)) last_activity_ = now;
     const int timeout = snapshot.settings.screen_timeout_seconds;
     if (awake_ && timeout && now - last_activity_ >= int64_t(timeout) * 1000000) Sleep();
-    if (now - last_ui_tick_ < 1000000) return;
+    // The battery task confirms VBUS edges in about 150 ms. Keep the watch
+    // snapshot cadence close to that edge so the status icon does not wait for
+    // the old one-second UI refresh interval. Dynamic UI work is lightweight;
+    // ADC sampling remains independently limited in BajiBatteryMonitor.
+    if (now - last_ui_tick_ < 250000) return;
     last_ui_tick_ = now;
     WatchUi::DeviceSnapshot device;
     bool discharging = false;

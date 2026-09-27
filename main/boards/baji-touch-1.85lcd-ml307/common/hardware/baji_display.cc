@@ -88,22 +88,7 @@ void BajiDisplay::SetupUI() {
     DisplayLockGuard lock(this);
     if (quiet_boot_ || setup_ui_called_) return;
 
-    // The native application applies assets after networking. A watch must
-    // display its Chinese menus offline too. Reuse the already packaged font,
-    // without starting the audio models before AudioService::Initialize().
-    void* asset_data = nullptr;
-    size_t asset_size = 0;
-    auto& assets = Assets::GetInstance();
-    if (assets.GetAssetData("index.json", asset_data, asset_size)) {
-        auto index = cJSON_ParseWithLength(static_cast<const char*>(asset_data), asset_size);
-        auto font = cJSON_GetObjectItem(index, "text_font");
-        if (cJSON_IsString(font) && assets.GetAssetData(font->valuestring, asset_data, asset_size)) {
-            auto text_font = std::make_shared<LvglCBinFont>(asset_data);
-            if (text_font->font() && SetTextFont(text_font))
-                ESP_LOGI("BajiDisplay", "Loaded native font for offline watch UI");
-        }
-        cJSON_Delete(index);
-    }
+    LoadPackagedTextFont();
 
     // Native theme/font updates still reference these objects. Keep them alive,
     // but let the board's watch root own the visible screen and touch handling.
@@ -134,6 +119,25 @@ void BajiDisplay::SetupUI() {
     if (first_frame_callback_) {
         auto callback = std::move(first_frame_callback_);
         callback();
+    }
+}
+
+void BajiDisplay::LoadPackagedTextFont() {
+    // The native application applies assets after networking. A watch must
+    // display its Chinese menus offline too. Reuse the already packaged font,
+    // without starting the audio models before AudioService::Initialize().
+    void* asset_data = nullptr;
+    size_t asset_size = 0;
+    auto& assets = Assets::GetInstance();
+    if (assets.GetAssetData("index.json", asset_data, asset_size)) {
+        auto index = cJSON_ParseWithLength(static_cast<const char*>(asset_data), asset_size);
+        auto font = cJSON_GetObjectItem(index, "text_font");
+        if (cJSON_IsString(font) && assets.GetAssetData(font->valuestring, asset_data, asset_size)) {
+            auto text_font = std::make_shared<LvglCBinFont>(asset_data);
+            if (text_font->font() && SetTextFont(text_font))
+                ESP_LOGI("BajiDisplay", "Loaded native font for offline watch UI");
+        }
+        cJSON_Delete(index);
     }
 }
 
@@ -319,8 +323,9 @@ void BajiDisplay::RefreshChargingStyle() {
     // Rebind on theme changes before a replaced runtime font is released.
     lv_obj_set_style_text_font(charging_fullscreen_, text_font, 0);
     lv_obj_set_style_text_font(charging_icon_, icon_font, 0);
-    lv_obj_align(charging_icon_, LV_ALIGN_CENTER, 0, -lv_font_get_line_height(text_font));
-    lv_obj_align_to(charging_caption_, charging_icon_, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+    lv_obj_align(charging_icon_, LV_ALIGN_CENTER, 0, -lv_font_get_line_height(text_font) - 16);
+    lv_obj_align_to(charging_level_, charging_icon_, LV_ALIGN_OUT_BOTTOM_MID, 0, 12);
+    lv_obj_align_to(charging_caption_, charging_level_, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 }
 
 void BajiDisplay::ShowChargingFullscreen(bool show) {
@@ -330,6 +335,7 @@ void BajiDisplay::ShowChargingFullscreen(bool show) {
         return;
     }
     if (!charging_fullscreen_) {
+        LoadPackagedTextFont();
         auto screen = lv_display_get_screen_active(display_);
         charging_fullscreen_ = lv_obj_create(screen);
         lv_obj_set_size(charging_fullscreen_, width_, height_);
@@ -344,6 +350,9 @@ void BajiDisplay::ShowChargingFullscreen(bool show) {
 
         charging_icon_ = lv_label_create(charging_fullscreen_);
         lv_label_set_text(charging_icon_, MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_BOLT);
+        lv_obj_set_style_text_color(charging_icon_, lv_color_hex(0x44de83), 0);
+        charging_level_ = lv_label_create(charging_fullscreen_);
+        lv_label_set_text(charging_level_, "--%");
         charging_caption_ = lv_label_create(charging_fullscreen_);
         lv_label_set_text(charging_caption_, Lang::Strings::BATTERY_CHARGING);
         lv_obj_set_width(charging_caption_, width_ * 85 / 100);
@@ -353,4 +362,17 @@ void BajiDisplay::ShowChargingFullscreen(bool show) {
     RefreshChargingStyle();
     lv_obj_remove_flag(charging_fullscreen_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(charging_fullscreen_);
+}
+
+void BajiDisplay::UpdateChargingState(int level, bool usb, bool charging, bool full) {
+    DisplayLockGuard lock(this);
+    if (!charging_fullscreen_) return;
+    if (level < 0) lv_label_set_text(charging_level_, "--%");
+    else lv_label_set_text_fmt(charging_level_, "%d%%", std::clamp(level, 0, 100));
+    lv_label_set_text(charging_icon_, usb ? MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_BOLT
+                                        : MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_FULL);
+    lv_obj_set_style_text_color(charging_icon_, usb ? lv_color_hex(0x44de83) : lv_color_white(), 0);
+    lv_label_set_text(charging_caption_, full ? Lang::Strings::BATTERY_FULL
+        : charging ? Lang::Strings::BATTERY_CHARGING : "\u5df2\u63a5\u7535\u6e90");
+    RefreshChargingStyle();
 }

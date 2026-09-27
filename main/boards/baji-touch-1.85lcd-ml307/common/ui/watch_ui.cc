@@ -577,7 +577,9 @@ void WatchUi::Tick() {
         lv_obj_delete(toast_);
         toast_ = nullptr;
     }
+    const uint32_t wallpaper_interval_ms =
+        static_cast<uint32_t>(snapshot_.settings.wallpaper_interval_seconds) * 1000;
     if (page_ == Page::Standby && !control_visible_ && !modal_ && !reminder_ &&
-        now - wallpaper_tick_ >= 3000)
+        wallpaper_interval_ms && now - wallpaper_tick_ >= wallpaper_interval_ms)
         NextWallpaper(1);
 }

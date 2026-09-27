@@ -91,7 +91,9 @@ void WatchUi::RenderStatus() {
 
     const bool battery_known = device_.battery >= 0;
     const int level = std::clamp(device_.battery, 0, 100);
-    const bool charging = battery_known && device_.charging;
+    // USB presence is available before the first ADC sample. Do not delay the
+    // cable indicator until the battery percentage becomes valid.
+    const bool charging = device_.charging;
     int x = 37;
     // Keep the battery as one compact glyph: a fine white shell, a continuous
     // fill, and (when charging) the bolt inside the shell as in the reference.

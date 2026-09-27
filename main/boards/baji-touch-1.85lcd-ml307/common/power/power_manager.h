@@ -3,11 +3,12 @@
 #include <cstdint>
 #include <atomic>
 #include <functional>
-#include <vector>
+#include <memory>
+#include "battery_monitor.h"
 
 #include <driver/gpio.h>
-#include <esp_adc/adc_oneshot.h>
 #include <esp_timer.h>
+#include <freertos/task.h>
 
 // Shared RTC state for runtime shutdown and the next boot.
 extern "C" void charging_rtc_set_usb_shutdown_flag(void);
@@ -22,21 +23,15 @@ enum class PowerKeyEvent { Tap, LongPress };
 
 class PowerManager {
 private:
-    esp_timer_handle_t timer_handle_ = nullptr;
+    TaskHandle_t battery_task_ = nullptr;
     esp_timer_handle_t power_timer_handle_ = nullptr;
     std::function<void(bool)> on_charging_status_changed_;
     std::function<void(bool)> on_low_battery_status_changed_;
 
     gpio_num_t charging_pin_ = GPIO_NUM_NC;
-    std::vector<uint16_t> adc_values_;
-    uint32_t battery_level_ = 30;
-    bool is_charging_ = false;
+    std::unique_ptr<BajiBatteryMonitor> battery_;
+    bool usb_present_ = false;
     bool is_low_battery_ = false;
-    int ticks_ = 0;
-    adc_oneshot_unit_handle_t adc_handle_ = nullptr;
-    const int kBatteryAdcInterval = 60;
-    const int kBatteryAdcDataCount = 3;
-    const int kLowBatteryLevel = 20;
 
     bool key_raw_pressed_ = false;
     bool key_pressed_ = false;
@@ -45,7 +40,6 @@ private:
     int64_t key_raw_since_ = 0;
     int64_t key_pressed_since_ = 0;
     int64_t shutdown_released_since_ = 0;
-    bool new_charging_status = false;
     std::atomic<bool> shutdown_requested_{false};
     std::atomic<bool> emergency_shutdown_{false};
 
@@ -55,7 +49,7 @@ private:
     void PowrSwitch();
     void PollPowerKey(bool pressed, int64_t now);
     void CheckBatteryStatus();
-    void ReadBatteryAdcData();
+    static void BatteryTask(void* arg);
     static void ShutdownTask(void* arg);
     void RememberUsbShutdown();
     void BeginEmergencyShutdown();
@@ -67,7 +61,8 @@ public:
     ~PowerManager();
     bool IsCharging();
     bool IsDischarging();
-    uint8_t GetBatteryLevel();
+    BajiBatteryMonitor::Snapshot GetBatterySnapshot();
+    void SaveBatteryState();
     void OnLowBatteryStatusChanged(std::function<void(bool)> callback);
     void OnChargingStatusChanged(std::function<void(bool)> callback);
     void OnPowerUi(std::function<void(PowerUiHint)> callback);

@@ -1,4 +1,5 @@
 #include "power_manager.h"
+#include "battery_monitor.h"
 #include "config.h"
 #include "hardware/baji_backlight.h"
 #include "hardware/baji_display.h"
@@ -9,6 +10,7 @@
 #include <esp_log.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
@@ -158,6 +160,8 @@ extern "C" void board_charging_only_main(void)
     }
 
     LatchPowerControlOn();
+    BajiBatteryMonitor battery;
+    battery.Poll();
 
     BajiBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
     BajiDisplay* display = baji_185_create_lcd_display(true);
@@ -167,6 +171,9 @@ extern "C" void board_charging_only_main(void)
     }
 
     display->ShowChargingFullscreen(true);
+    const auto initial_battery = battery.GetSnapshot();
+    display->UpdateChargingState(initial_battery.level, initial_battery.usb,
+        initial_battery.charging, initial_battery.full);
     display->RefreshNow();
     backlight.SetBrightness(POWER_CHARGING_FULLSCREEN_BACKLIGHT);
 
@@ -174,10 +181,15 @@ extern "C" void board_charging_only_main(void)
 
     const int poll_ms = 20;
     int hold_ms = 0;
+    int64_t unplugged_at_ms = -1;
+    int64_t battery_poll_at_ms = esp_timer_get_time() / 1000;
 
     for (;;) {
-        // USB may have disappeared while the LCD was initializing.
-        if (!IsV5mPresent()) {
+        const int64_t now_ms = esp_timer_get_time() / 1000;
+        if (IsV5mPresent()) unplugged_at_ms = -1;
+        else if (unplugged_at_ms < 0) unplugged_at_ms = now_ms;
+        if (unplugged_at_ms >= 0 && now_ms - unplugged_at_ms >= 100) {
+            battery.SaveState();
             charging_rtc_clear_boot_flags();
             backlight.TurnOffImmediately();
             ChargingOnlyPowerOffDeepSleep();
@@ -186,12 +198,20 @@ extern "C" void board_charging_only_main(void)
         if (POWER_KEY_PRESSED()) {
             hold_ms += poll_ms;
             if (hold_ms >= POWER_KEY_HOLD_MS_TO_BOOT) {
+                battery.SaveState();
                 charging_rtc_clear_boot_flags();
                 backlight.TurnOffImmediately();
                 esp_restart();
             }
         } else {
             hold_ms = 0;
+        }
+
+        if (now_ms - battery_poll_at_ms >= 100) {
+            battery_poll_at_ms = now_ms;
+            battery.Poll();
+            const auto state = battery.GetSnapshot();
+            display->UpdateChargingState(state.level, state.usb, state.charging, state.full);
         }
 
         vTaskDelay(pdMS_TO_TICKS(poll_ms));

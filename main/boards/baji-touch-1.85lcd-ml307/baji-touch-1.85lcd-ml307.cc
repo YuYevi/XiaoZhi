@@ -31,6 +31,7 @@ namespace {
 
 static BajiAudioCodec* g_baji_shutdown_codec = nullptr;
 static BajiBacklight* g_baji_shutdown_backlight = nullptr;
+static PowerManager* g_baji_shutdown_power = nullptr;
 
 static void baji_shutdown_handler(void) {
     if (g_baji_shutdown_backlight != nullptr) {
@@ -39,6 +40,7 @@ static void baji_shutdown_handler(void) {
     if (g_baji_shutdown_codec != nullptr) {
         g_baji_shutdown_codec->PrepareForShutdown();
     }
+    if (g_baji_shutdown_power != nullptr) g_baji_shutdown_power->SaveBatteryState();
 }
 
 constexpr uint64_t LCD_OPCODE_READ_CMD = 0x03ULL;
@@ -562,6 +564,7 @@ public:
         network_offline_ = Settings("watch").GetBool("net_off", false);
         // Complete BAJI's power-on gate before initializing screen and audio.
         power_ = new PowerManager(POWER_USB_IN);
+        g_baji_shutdown_power = power_;
         auto* backlight = static_cast<BajiBacklight*>(GetBacklight());
         g_baji_shutdown_backlight = backlight;
         ESP_ERROR_CHECK(esp_register_shutdown_handler(baji_shutdown_handler));
@@ -594,10 +597,13 @@ public:
         return &backlight;
     }
     bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
-        level = power_->GetBatteryLevel();
-        charging = power_->IsCharging();
-        discharging = power_->IsDischarging();
-        return true;
+        const auto state = power_->GetBatterySnapshot();
+        level = state.level;
+        // The watch intentionally keeps a green bolt while USB is attached,
+        // including at full charge. SOC uses the separate hardware STAT input.
+        charging = state.usb;
+        discharging = !state.usb;
+        return state.valid;
     }
     void StartNetwork() override {
         // Application calls this after board and display initialization completes.

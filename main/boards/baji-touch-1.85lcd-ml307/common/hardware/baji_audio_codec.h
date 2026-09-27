@@ -9,6 +9,7 @@
 #include <esp_codec_dev_defaults.h>
 
 #include <functional>
+#include <cstdint>
 #include <mutex>
 #include <vector>
 
@@ -30,6 +31,7 @@ public:
     void SetInputGain(float gain) override;
     void EnableInput(bool enable) override;
     void EnableOutput(bool enable) override;
+    void PollOutputPower();
 
     // Permanently mute the amplifier for the remainder of a shutdown/reboot.
     // Audio tasks can finish asynchronously, so this also rejects late output
@@ -48,11 +50,15 @@ private:
     std::vector<int32_t> input_buffer_;
     std::vector<int32_t> output_buffer_;
     bool shutdown_prepared_ = false;
+    bool pa_enabled_ = false;
+    int64_t pa_ready_at_us_ = 0;
+    int64_t last_output_us_ = 0;
 
     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk,
         gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
     void ResetCodec();
     void UpdateDeviceState();
+    void StartAmplifier();
     int Read(int16_t* dest, int samples) override;
     int Write(const int16_t* data, int samples) override;
 };

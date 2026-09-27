@@ -90,87 +90,38 @@ void PowerManager::PollPowerKey(bool pressed, int64_t now) {
 }
 
 void PowerManager::CheckBatteryStatus() {
-#if POWER_CHARGE_DETECT_USE_GPIO
-    new_charging_status = (gpio_get_level(charging_pin_) == POWER_USB_VBUS_ACTIVE_LEVEL);
-#else
-    int usb_usb_adc_value0;
-    ESP_ERROR_CHECK(adc_oneshot_read(adc_handle_, POWER_USBIN_ADC_CHANNEL, &usb_usb_adc_value0));
-    new_charging_status = (1500 < usb_usb_adc_value0 && usb_usb_adc_value0 < 4000);
-#endif
-
-    if (new_charging_status != is_charging_) {
-        ReadBatteryAdcData();
-        is_charging_ = new_charging_status;
+    battery_->Poll();
+    const auto state = battery_->GetSnapshot();
+    const bool unplugged = usb_present_ && !state.usb;
+    if (state.usb != usb_present_) {
+        usb_present_ = state.usb;
         if (on_charging_status_changed_) {
-            on_charging_status_changed_(is_charging_);
+            on_charging_status_changed_(usb_present_);
         }
-        return;
     }
-
-    if (adc_values_.size() < kBatteryAdcDataCount) {
-        ReadBatteryAdcData();
-        return;
-    }
-
-    ticks_++;
-    if (ticks_ % kBatteryAdcInterval == 0) {
-        ReadBatteryAdcData();
+    if (!state.valid) return;
+    const bool low = is_low_battery_ ? state.level < 25 || state.millivolts < 3550 :
+        state.level <= 20 || state.millivolts <= 3400;
+    if (low != is_low_battery_) {
+        is_low_battery_ = low;
+        if (on_low_battery_status_changed_) {
+            on_low_battery_status_changed_(low);
+        }
+    } else if (low && unplugged && on_low_battery_status_changed_) {
+        // The low event may have been suppressed by the UI while plugged in.
+        on_low_battery_status_changed_(true);
     }
 }
 
-void PowerManager::ReadBatteryAdcData() {
-    int adc_value;
-    ESP_ERROR_CHECK(adc_oneshot_read(adc_handle_, POWER_BATTERY_ADC_CHANNEL, &adc_value));
-
-    adc_values_.push_back(adc_value);
-    if (adc_values_.size() > kBatteryAdcDataCount) {
-        adc_values_.erase(adc_values_.begin());
+void PowerManager::BatteryTask(void* arg) {
+    auto* self = static_cast<PowerManager*>(arg);
+    for (;;) {
+        if (!self->shutdown_requested_) self->CheckBatteryStatus();
+        // GPIO edge confirmation is intentionally faster than ADC/model
+        // sampling. Poll() still limits ADC reads to five seconds, so this
+        // does not increase the expensive battery measurement rate.
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
-    uint32_t average_adc = 0;
-    for (auto value : adc_values_) {
-        average_adc += value;
-    }
-    average_adc /= adc_values_.size();
-
-    const struct {
-        uint16_t adc;
-        uint8_t level;
-    } levels[] = {
-        {1970, 0},
-        {2062, 20},
-        {2154, 40},
-        {2246, 60},
-        {2338, 80},
-        {2430, 100}
-    };
-
-    if (average_adc < levels[0].adc) {
-        battery_level_ = 0;
-    }
-
-    else if (average_adc >= levels[5].adc) {
-			battery_level_ = 100;
-    } else {
-
-        for (int i = 0; i < 5; i++) {
-            if (average_adc >= levels[i].adc && average_adc < levels[i+1].adc) {
-                float ratio = static_cast<float>(average_adc - levels[i].adc) / (levels[i+1].adc - levels[i].adc);
-                battery_level_ = levels[i].level + ratio * (levels[i+1].level - levels[i].level);
-                break;
-            }
-        }
-    }
-
-    if (adc_values_.size() >= kBatteryAdcDataCount) {
-        bool new_low_battery_status = battery_level_ <= kLowBatteryLevel;
-        if (new_low_battery_status != is_low_battery_) {
-            is_low_battery_ = new_low_battery_status;
-            if (on_low_battery_status_changed_) {
-                on_low_battery_status_changed_(is_low_battery_);
-            }
-        }
-    }
-
 }
 
 void PowerManager::ShutdownTask(void* arg) {
@@ -183,7 +134,7 @@ void PowerManager::RememberUsbShutdown() {
 #if POWER_CHARGE_DETECT_USE_GPIO
     if (gpio_get_level(charging_pin_) == POWER_USB_VBUS_ACTIVE_LEVEL) {
 #else
-    if (new_charging_status) {
+    if (battery_->GetSnapshot().usb) {
 #endif
         charging_rtc_set_usb_shutdown_flag();
     }
@@ -195,9 +146,6 @@ void PowerManager::BeginEmergencyShutdown() {
     emergency_shutdown_ = true;
     shutdown_requested_ = true;
     shutdown_released_since_ = 0;
-    if (timer_handle_) {
-        esp_timer_stop(timer_handle_);
-    }
     RememberUsbShutdown();
     ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
     gpio_set_level(DISPLAY_BACKLIGHT_PIN, 0);
@@ -208,6 +156,7 @@ void PowerManager::BeginEmergencyShutdown() {
 }
 
 void PowerManager::RunShutdownSequence() {
+    SaveBatteryState();
     auto& board = Board::GetInstance();
     if (auto* codec = static_cast<BajiAudioCodec*>(board.GetAudioCodec())) {
         codec->PrepareForShutdown();
@@ -221,10 +170,6 @@ void PowerManager::RunShutdownSequence() {
     if (power_timer_handle_) {
         esp_timer_stop(power_timer_handle_);
     }
-    if (timer_handle_) {
-        esp_timer_stop(timer_handle_);
-    }
-
     RememberUsbShutdown();
 
     if (auto* backlight = static_cast<BajiBacklight*>(board.GetBacklight())) {
@@ -325,32 +270,7 @@ PowerManager::PowerManager(gpio_num_t pin) : charging_pin_(pin) {
     };
     ESP_ERROR_CHECK(esp_timer_create(&power_timer_args, &power_timer_handle_));
 
-    esp_timer_create_args_t timer_args = {
-        .callback = [](void* arg) {
-            PowerManager* self = static_cast<PowerManager*>(arg);
-            self->CheckBatteryStatus();
-        },
-        .arg = this,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "battery_check_timer",
-        .skip_unhandled_events = true,
-    };
-    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &timer_handle_));
-
-    adc_oneshot_unit_init_cfg_t init_config = {
-        .unit_id = POWER_CBS_ADC_UNIT,
-        .ulp_mode = ADC_ULP_MODE_DISABLE,
-    };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle_));
-
-    adc_oneshot_chan_cfg_t chan_config = {
-        .atten = ADC_ATTEN_DB_12,
-        .bitwidth = ADC_BITWIDTH_12,
-    };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle_, POWER_BATTERY_ADC_CHANNEL, &chan_config));
-#if !POWER_CHARGE_DETECT_USE_GPIO
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle_, POWER_USBIN_ADC_CHANNEL, &chan_config));
-#endif
+    battery_ = std::make_unique<BajiBatteryMonitor>();
 }
 
 void PowerManager::Start() {
@@ -359,34 +279,33 @@ void PowerManager::Start() {
     key_raw_since_ = esp_timer_get_time();
     key_wait_release_ = true;
     ESP_ERROR_CHECK(esp_timer_start_periodic(power_timer_handle_, 20000));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(timer_handle_, 1000000));
+    ESP_ERROR_CHECK(xTaskCreate(BatteryTask, "baji_battery", 4096, this,
+        tskIDLE_PRIORITY + 1, &battery_task_) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
 }
 
 PowerManager::~PowerManager() {
-    if (timer_handle_) {
-        esp_timer_stop(timer_handle_);
-        esp_timer_delete(timer_handle_);
-    }
+    if (battery_task_) vTaskDelete(battery_task_);
     if (power_timer_handle_) {
         esp_timer_stop(power_timer_handle_);
         esp_timer_delete(power_timer_handle_);
     }
-    if (adc_handle_ != nullptr) {
-        adc_oneshot_del_unit(adc_handle_);
-    }
 }
 
 bool PowerManager::IsCharging() {
-    return is_charging_;
+    return battery_->GetSnapshot().usb;
 }
 
 bool PowerManager::IsDischarging() {
 
-    return !is_charging_;
+    return !battery_->GetSnapshot().usb;
 }
 
-uint8_t PowerManager::GetBatteryLevel() {
-    return battery_level_;
+BajiBatteryMonitor::Snapshot PowerManager::GetBatterySnapshot() {
+    return battery_->GetSnapshot();
+}
+
+void PowerManager::SaveBatteryState() {
+    battery_->SaveState();
 }
 
 void PowerManager::OnLowBatteryStatusChanged(std::function<void(bool)> callback) {
