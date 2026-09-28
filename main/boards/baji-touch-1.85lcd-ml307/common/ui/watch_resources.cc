@@ -162,9 +162,9 @@ bool LoadPack() {
     if (!Assets::GetInstance().GetAssetData("watch_ui.pack", source, size) ||
         size < sizeof(PackHeader)) return false;
     const auto header = Read<PackHeader>(static_cast<uint8_t*>(source), 0);
-    const size_t metadata_start = sizeof(PackHeader) + (header.version == 4 ? sizeof(PackedVideoClips) : 0);
+    const size_t metadata_start = sizeof(PackHeader) + (header.version >= 4 ? sizeof(PackedVideoClips) : 0);
     if (std::memcmp(header.magic, "BAJIUI1", 8) ||
-        (header.version < 1 || header.version > 4) ||
+        (header.version < 1 || header.version > 5) ||
         header.bytes != size || header.video < metadata_start || header.video > size ||
         header.font_count > 100 || header.icon_count > 256 || !header.frame_count || header.frame_count > 1000 ||
         header.fps == 0 || header.fps > 30 ||
@@ -176,7 +176,7 @@ bool LoadPack() {
         return false;
     }
     VideoClip standby{0, header.frame_count}, speaking{0, header.frame_count};
-    if (header.version == 4) {
+    if (header.version >= 4) {
         const auto clips = Read<PackedVideoClips>(static_cast<uint8_t*>(source), sizeof(PackHeader));
         if (!clips.standby_frames || clips.standby_frames >= header.frame_count ||
             clips.speaking_frames != header.frame_count - clips.standby_frames) {
@@ -241,7 +241,7 @@ bool DecodeFrame(uint32_t index) {
     if (!Assets::GetInstance().GetAssetData("watch_ui.pack", source, size) ||
         size != state.header.bytes || size < sizeof(PackHeader) ||
         std::memcmp(source, &state.header, sizeof(PackHeader)) ||
-        (state.header.version == 4 && std::memcmp(static_cast<uint8_t*>(source) + sizeof(PackHeader),
+        (state.header.version >= 4 && std::memcmp(static_cast<uint8_t*>(source) + sizeof(PackHeader),
             state.ui + sizeof(PackHeader), sizeof(PackedVideoClips)))) {
         state.requires_attach = true;
         return false;
@@ -486,12 +486,15 @@ bool WatchResources::AttachVideo(lv_obj_t* image, bool speaking) {
     ESP_LOGI(kTag, "AI video ready: 360x360, standby/speaking=%lu/%lu frames, target %lu fps, JPEG scratch=%u bytes, baked shading=%d",
              static_cast<unsigned long>(state.standby.count), static_cast<unsigned long>(state.speaking.count),
              static_cast<unsigned long>(state.header.fps),
-             static_cast<unsigned>(largest_frame), state.header.version >= 2);
+             static_cast<unsigned>(largest_frame), VideoIncludesShading());
+    if (VideoIncludesShading()) {
+        ESP_LOGW(kTag, "Legacy video has baked shading; update the assets partition to restore source brightness");
+    }
     return true;
 }
 
 bool WatchResources::VideoIncludesShading() {
-    return LoadPack() && State().header.version >= 2;
+    return LoadPack() && State().header.version >= 2 && State().header.version <= 4;
 }
 
 void WatchResources::SetVideoSpeaking(bool speaking) {

@@ -18,9 +18,11 @@ public:
     // Reads one compressed frame under the display lock. If assets change or
     // upgrading begins, the last frame remains visible until a new AttachVideo.
     static bool AttachVideo(lv_obj_t* image, bool speaking = false);
-    // Version 1 packs need UI overlays; version 2+ bakes them into video.
+    // Only versions 2..4 have irreversible shading baked into video.
     // Version 3 also retains fractional CSS font sizes and numeric weights.
     // Version 4 stores separate standby and speaking frame ranges.
+    // Version 5 keeps that layout with original, unshaded video pixels.
+    // Legacy shaded resources require an assets update, not another overlay.
     static bool VideoIncludesShading();
     // Reuses the decoder and buffers; repeating the same state keeps its phase.
     // A change while paused is presented when playback resumes.

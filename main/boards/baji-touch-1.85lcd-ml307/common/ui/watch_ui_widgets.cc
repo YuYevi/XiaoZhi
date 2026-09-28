@@ -195,6 +195,19 @@ void SingleLine(lv_obj_t* label) {
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
 }
 
+void PhotoLabelBackground(lv_obj_t* label) {
+    // A small surface behind the actual label preserves contrast on bright
+    // photos without changing the background pixels or font rasterization.
+    lv_obj_set_style_max_width(label, lv_obj_get_style_width(label, LV_PART_MAIN), 0);
+    lv_obj_set_width(label, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(label, 6, 0);
+    lv_obj_set_align(label, LV_ALIGN_TOP_MID);
+    lv_obj_set_x(label, 0);
+    lv_obj_set_style_bg_color(label, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(label, 168, 0);
+    lv_obj_set_style_radius(label, 6, 0);
+}
+
 uint32_t BlendColor(uint32_t a, uint32_t b, float amount) {
     amount = std::clamp(amount, 0.0f, 1.0f);
     uint32_t color = 0;
@@ -472,12 +485,13 @@ lv_obj_t* WatchUi::Button(lv_obj_t* p, int x, int y, int w, int h, uint32_t c, i
 void WatchUi::Back(lv_obj_t* p, std::function<void()> cb) {
     // Borrow BAJI's light, translucent close-control surface while retaining
     // this board's explicit back action and existing touch target.
-    auto* b = Button(p, 60, 44, 36, 36, 0xffffff, LV_RADIUS_CIRCLE,
+    const bool on_photo = page_ == Page::Chat;
+    auto* b = Button(p, 60, 44, 36, 36, on_photo ? 0x000000 : 0xffffff, LV_RADIUS_CIRCLE,
                      cb ? std::move(cb) : [this] { GoBack(); });
-    lv_obj_set_style_bg_opa(b, 20, 0);
-    lv_obj_set_style_bg_opa(b, 35, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(b, on_photo ? 160 : 20, 0);
+    lv_obj_set_style_bg_opa(b, on_photo ? 192 : 35, LV_STATE_PRESSED);
     auto* arrow = CenteredIcon(b, "arrow-left", 18);
-    lv_obj_set_style_image_opa(arrow, 178, 0);
+    lv_obj_set_style_image_opa(arrow, on_photo ? LV_OPA_COVER : 178, 0);
 }
 
 void WatchUi::PageTitle(const char* title, uint32_t accent) {

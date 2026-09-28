@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build one board resource pack from the supplied watch prototype.
 
-Requires Pillow, Node+the prototype's react/lucide modules, sharp, and FFmpeg.
+Requires Pillow; full UI generation also needs Node+React/lucide and sharp.
+FFmpeg is required for video transcoding, but native MJPEG is copied losslessly.
 Windows fonts are read locally; complete font files are never copied.
 Example: python generate_watch_resources.py --replace-videos-in watch_ui.pack
   --standby-video standby.mp4 --speaking-video speaking.mp4 --ffmpeg FFMPEG
@@ -30,12 +31,12 @@ Full generation also requires --prototype PATH --node NODE --sharp SHARP_PACKAGE
 # (https://github.com/JulietaUla/Montserrat).
 from pathlib import Path
 import argparse, hashlib, io, json, math, re, struct, subprocess
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, JpegImagePlugin
 
 MAGIC = b'BAJIUI1\0'
 COMMON_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = COMMON_DIR.parents[3]
-PACK_VERSION = 4  # v4 adds standby/speaking frame counts after the original header.
+PACK_VERSION = 5  # v4 clip table layout; v5 preserves source pixels without baked shading.
 HEADER = struct.Struct('<8s10I')
 CLIPS = struct.Struct('<II')
 FONT = struct.Struct('<HBBhhIIII')
@@ -82,22 +83,30 @@ def run(args):
     subprocess.run([str(arg) for arg in args],check=True)
 
 
-def chat_shading():
-    # Match the prototype's static overlays without adding any video motion:
-    # radial transparent 52%, black 28% at 72%, black 70% at 100%; bottom 30%
-    # fades from transparent to black 65%. Only the video is shaded, not text.
-    gain=[]
-    for y in range(360):
-        bottom=max(0., (y-252)/107)*.65
-        for x in range(360):
-            radius=math.hypot(x-179.5,y-179.5)/254.5584
-            vignette=0 if radius<.52 else (radius-.52)*1.4 if radius<.72 else .28+(radius-.72)*1.5
-            gain.append(round(255*(1-min(1.,vignette))*(1-bottom)))
-    mask=Image.new('L',(360,360));mask.putdata(gain)
-    return mask.convert('RGB')
+def split_mjpeg(encoded):
+    frames=[];pos=0
+    while pos<len(encoded):
+        if encoded[pos:pos+2]!=b'\xff\xd8':raise ValueError('Invalid MJPEG frame start')
+        end=encoded.find(b'\xff\xd9',pos+2)+2
+        if end<=pos+2:raise ValueError('Truncated MJPEG frame')
+        frame=encoded[pos:end]
+        with Image.open(io.BytesIO(frame)) as image:
+            image.load()
+            if image.format!='JPEG' or image.mode!='RGB' or image.info.get('progressive'):
+                raise ValueError('MJPEG requires baseline RGB JPEG frames')
+        frames.append(frame);pos=end
+    if not frames:raise ValueError('MJPEG clip has no frames')
+    return frames
 
 
-def probe_video(ffmpeg, source):
+def probe_video(ffmpeg, source, mjpeg_fps=10):
+    if source.suffix.lower() in ('.mjpeg','.mjpg'):
+        frames=split_mjpeg(source.read_bytes())
+        with Image.open(io.BytesIO(frames[0])) as image:width,height=image.size
+        return {'width':width,'height':height,'source_fps':mjpeg_fps,
+                'source_duration_seconds':len(frames)/mjpeg_fps,
+                'source_audio_streams':0,'native_mjpeg':True}
+    if ffmpeg is None:raise ValueError('FFmpeg is required to convert non-MJPEG video')
     # FFmpeg-only installations (including imageio-ffmpeg) need no ffprobe.
     result=subprocess.run([str(ffmpeg),'-hide_banner','-i',str(source),'-map','0:v:0',
                            '-frames:v','1','-an','-f','null','-'],capture_output=True,
@@ -116,6 +125,18 @@ def probe_video(ffmpeg, source):
 
 def video_frames(ffmpeg, source, mjpeg, fps=10, media=None):
     media=media or probe_video(ffmpeg,source)
+    if media.get('native_mjpeg'):
+        if media['source_fps']!=fps:
+            raise ValueError('Native MJPEG frame rate must match --video-fps; transcode explicitly to change timing')
+        frames=split_mjpeg(source.read_bytes())
+        for frame in frames:
+            with Image.open(io.BytesIO(frame)) as image:
+                if image.size!=(360,360):
+                    raise ValueError('Native MJPEG must be 360x360; transcode explicitly to change geometry')
+        # Copy the original JPEG bytes: no color conversion, resampling,
+        # vignette, or second lossy generation can damage source detail.
+        mjpeg.write_bytes(b''.join(frames))
+        return frames
     # Square 360 px input is left on its original pixel grid. Other input is
     # scaled uniformly and center-cropped; never add zoom/breathing/translation.
     filters=[]
@@ -125,45 +146,27 @@ def video_frames(ffmpeg, source, mjpeg, fps=10, media=None):
     filters += [f'fps={fps}','setsar=1']
     command=[str(ffmpeg),'-hide_banner','-loglevel','error','-i',str(source),
              '-map','0:v:0','-vf',','.join(filters),
-             '-an','-sn','-dn','-pix_fmt','rgb24','-f','rawvideo','pipe:1']
-    encode_command=[str(ffmpeg),'-hide_banner','-loglevel','error','-f','rawvideo',
-             '-pixel_format','rgb24','-video_size','360x360','-framerate',str(fps),'-i','pipe:0',
-             '-an','-pix_fmt','yuvj420p','-c:v','mjpeg','-q:v','4','-f','mjpeg','-y',str(mjpeg)]
-    frame_count=0;frame_bytes=360*360*3;shading=chat_shading()
-    with subprocess.Popen(command,stdout=subprocess.PIPE) as process, subprocess.Popen(encode_command,stdin=subprocess.PIPE) as encoder:
-        while True:
-            raw=process.stdout.read(frame_bytes)
-            if not raw:break
-            assert len(raw)==frame_bytes
-            image=Image.frombytes('RGB',(360,360),raw)
-            image=ImageChops.multiply(image,shading)
-            encoder.stdin.write(image.tobytes());frame_count+=1
-        assert process.wait()==0
-        encoder.stdin.close()
-        assert encoder.wait()==0
-    encoded=mjpeg.read_bytes();frames=[];pos=0
-    while pos<len(encoded):
-        assert encoded[pos:pos+2]==b'\xff\xd8'
-        end=encoded.find(b'\xff\xd9',pos+2)+2
-        assert end>pos+2
-        frames.append(encoded[pos:end]);pos=end
-    assert len(frames)==frame_count
-    return frames
+             '-an','-sn','-dn','-pix_fmt','yuvj420p','-c:v','mjpeg','-q:v','2',
+             '-f','mjpeg','-y',str(mjpeg)]
+    # Keep the decoder's established 4:2:0 input format. A single FFmpeg
+    # conversion avoids the former RGB round-trip and permanent black masks.
+    run(command)
+    return split_mjpeg(mjpeg.read_bytes())
 
 
 def read_ui_assets(data):
     if len(data)<HEADER.size:raise ValueError('Resource header is truncated')
     header=HEADER.unpack_from(data)
     _,version,total,nfonts,nicons,nframes,fps,font_at,icon_at,frame_at,video_at=header
-    if header[0]!=MAGIC or version not in (1,2,3,4) or total!=len(data):
+    if header[0]!=MAGIC or version not in (1,2,3,4,5) or total!=len(data):
         raise ValueError('Invalid resource header')
-    first_table=HEADER.size+(CLIPS.size if version==4 else 0)
+    first_table=HEADER.size+(CLIPS.size if version>=4 else 0)
     if not (0<nfonts<=100 and 0<nicons<=256 and 0<nframes<=1000 and 1<=fps<=30):
         raise ValueError('Invalid resource counts or frame rate')
     if not (first_table<=font_at and font_at+nfonts*FONT.size<=icon_at and
             icon_at+nicons*ICON.size<=frame_at and frame_at+nframes*FRAME.size<=video_at<=total):
         raise ValueError('Invalid resource table offsets')
-    if version==4:
+    if version>=4:
         standby,speaking=CLIPS.unpack_from(data,HEADER.size)
         if not standby or not speaking or standby+speaking!=nframes:
             raise ValueError('Invalid video clip counts')
@@ -215,9 +218,9 @@ def make_pack(fonts,icons,clips,fps):
 
 def validate_videos(pack):
     header,_,_=read_ui_assets(pack)
-    if header[1]!=PACK_VERSION:raise ValueError('Video validation requires a v4 pack')
+    if header[1]<4:raise ValueError('Video validation requires a v4 or newer pack')
     counts=CLIPS.unpack_from(pack,HEADER.size)
-    sizes=[];last_end=header[10]
+    sizes=[];sampling=set();last_end=header[10]
     for i in range(header[5]):
         offset,size=FRAME.unpack_from(pack,header[9]+i*FRAME.size)
         if offset<last_end or offset-last_end>3 or offset+size>len(pack):
@@ -226,11 +229,12 @@ def validate_videos(pack):
             image.load()
             if image.format!='JPEG' or image.size!=(360,360) or image.mode!='RGB' or image.info.get('progressive'):
                 raise ValueError('Device frames must be baseline 360x360 RGB JPEG')
+            sampling.add({0:'4:4:4',1:'4:2:2',2:'4:2:0'}.get(JpegImagePlugin.get_sampling(image),'unknown'))
         sizes.append(size);last_end=offset+size
     if last_end!=len(pack):raise ValueError('Unreferenced bytes remain after the final frame')
     return {'decoded_frames':len(sizes),'standby_frames':counts[0],'speaking_frames':counts[1],
             'max_frame_bytes':max(sizes),'fps':header[6],'frame_width':360,'frame_height':360,
-            'audio_streams':0,'bytes':len(pack),'ui_bytes':header[10],
+            'audio_streams':0,'jpeg_subsampling':sorted(sampling),'bytes':len(pack),'ui_bytes':header[10],
             'video_bytes':len(pack)-header[10]}
 
 
@@ -254,7 +258,7 @@ def verify_ui_unchanged(before,after):
 def convert_clips(args,work):
     clips=[];reports=[]
     for name,source in (('standby',args.standby_video),('speaking',args.speaking_video)):
-        media=probe_video(args.ffmpeg,source)
+        media=probe_video(args.ffmpeg,source,args.mjpeg_source_fps)
         frames=video_frames(args.ffmpeg,source,work/f'{name}-{args.video_fps}fps.mjpg',args.video_fps,media)
         if not frames:raise ValueError(f'Video clip has no frames: {source}')
         clips.append(frames)
@@ -264,13 +268,14 @@ def convert_clips(args,work):
                         'jpeg_bytes':sum(map(len,frames)),'max_frame_bytes':max(map(len,frames)),
                         'jpeg_payload_sha256':hashlib.sha256(b''.join(frames)).hexdigest(),
                         'geometry':'unchanged 360x360' if (media['width'],media['height'])==(360,360) else 'center cover',
-                        'extra_motion':False,'static_chat_shading':True,'output_audio_streams':0})
+                        'extra_motion':False,'static_chat_shading':False,'output_audio_streams':0,
+                        'encoding':'original JPEG bytes' if media.get('native_mjpeg') else 'FFmpeg MJPEG q2 4:2:0'})
     return clips,reports
 
 
 def save_pack(args,work,pack,report):
     report.update(validate_videos(pack))
-    report.update({'version':PACK_VERSION,'video_includes_shading':True,
+    report.update({'version':PACK_VERSION,'video_includes_shading':False,
                    'pack_sha256':hashlib.sha256(pack).hexdigest()})
     if report['bytes']>8*1024*1024:raise ValueError('Pack alone exceeds the 8 MiB assets partition')
     if report.get('estimated_assets_bytes',0)>8*1024*1024:
@@ -333,7 +338,9 @@ def main():
     parser.add_argument('--speaking-video',type=Path,required=True)
     parser.add_argument('--video-fps',type=int,default=10,
                         help='Common playback rate, 1..30 fps (default: source assets\' native 10 fps)')
-    parser.add_argument('--ffmpeg',type=Path,required=True)
+    parser.add_argument('--mjpeg-source-fps',type=int,default=10,
+                        help='Playback rate of raw MJPEG sources, which have no timing metadata (default: 10)')
+    parser.add_argument('--ffmpeg',type=Path,help='Required for non-MJPEG sources')
     parser.add_argument('--fonts',type=Path,default=Path('C:/Windows/Fonts'))
     parser.add_argument('--cjk-font',type=Path,default=DEFAULT_CJK_FONT,
                         help='Noto Sans SC Regular source; defaults to the existing LVGL test font')
@@ -342,6 +349,7 @@ def main():
     parser.add_argument('--common-charset',type=Path,default=PROJECT_ROOT/'managed_components/78__xiaozhi-fonts/charsets/common.json')
     args=parser.parse_args();work=args.work_dir.resolve();work.mkdir(parents=True,exist_ok=True)
     if not 1<=args.video_fps<=30:parser.error('--video-fps must be between 1 and 30')
+    if not 1<=args.mjpeg_source_fps<=30:parser.error('--mjpeg-source-fps must be between 1 and 30')
     for source in (args.standby_video,args.speaking_video):
         if not source.is_file():parser.error(f'Video source missing: {source}')
     if args.replace_videos_in:
