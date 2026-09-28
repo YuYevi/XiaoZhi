@@ -19,6 +19,8 @@ extern "C" esp_err_t __wrap_lvgl_port_init(const lvgl_port_cfg_t* cfg) {
     // for that event/layout stack without changing the native display class.
     auto watch_cfg = *cfg;
     watch_cfg.task_stack = std::max(watch_cfg.task_stack, 16 * 1024);
+    // Resume promptly at TE/DMA completion; audio processing keeps its higher priority.
+    watch_cfg.task_priority = std::max(watch_cfg.task_priority, 4);
     ESP_LOGI("BajiDisplay", "Watch LVGL task stack: %d bytes", watch_cfg.task_stack);
     return __real_lvgl_port_init(&watch_cfg);
 }

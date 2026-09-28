@@ -195,19 +195,6 @@ void SingleLine(lv_obj_t* label) {
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
 }
 
-void PhotoLabelBackground(lv_obj_t* label) {
-    // A small surface behind the actual label preserves contrast on bright
-    // photos without changing the background pixels or font rasterization.
-    lv_obj_set_style_max_width(label, lv_obj_get_style_width(label, LV_PART_MAIN), 0);
-    lv_obj_set_width(label, LV_SIZE_CONTENT);
-    lv_obj_set_style_pad_hor(label, 6, 0);
-    lv_obj_set_align(label, LV_ALIGN_TOP_MID);
-    lv_obj_set_x(label, 0);
-    lv_obj_set_style_bg_color(label, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(label, 168, 0);
-    lv_obj_set_style_radius(label, 6, 0);
-}
-
 uint32_t BlendColor(uint32_t a, uint32_t b, float amount) {
     amount = std::clamp(amount, 0.0f, 1.0f);
     uint32_t color = 0;

@@ -17,6 +17,7 @@ void WatchUi::LoadWallpapers() {
     if (asset_check_ && lv_tick_get() - asset_check_ < 5000)
         return;
     asset_check_ = lv_tick_get();
+    bool current_loaded = false;
     for (int i = 0; i < 3; ++i) {
         if (wallpaper_data_[i])
             continue;
@@ -41,61 +42,93 @@ void WatchUi::LoadWallpapers() {
         wallpapers_[i].data_size = s - sizeof(h);
         wallpapers_[i].data = data.get();
         wallpaper_data_[i] = std::move(data);
+        current_loaded |= i == wallpaper_transition_.To();
     }
-    if (page_ == Page::Standby && wallpaper_obj_ && wallpaper_data_[wallpaper_])
-        lv_image_set_src(wallpaper_obj_, &wallpapers_[wallpaper_]);
+    if (page_ == Page::Standby && wallpaper_obj_) {
+        if (current_loaded)
+            lv_image_set_src(wallpaper_obj_, &wallpapers_[wallpaper_transition_.To()]);
+        StartWallpaperTransition();
+    }
 }
 
 void WatchUi::RenderStandby() {
     wallpaper_obj_ = lv_image_create(content_);
     lv_obj_set_size(wallpaper_obj_, 360, 360);
     LoadWallpapers();
-    if (wallpaper_data_[wallpaper_])
-        lv_image_set_src(wallpaper_obj_, &wallpapers_[wallpaper_]);
+    if (wallpaper_data_[wallpaper_transition_.To()])
+        lv_image_set_src(wallpaper_obj_, &wallpapers_[wallpaper_transition_.To()]);
     lv_obj_remove_flag(wallpaper_obj_, LV_OBJ_FLAG_CLICKABLE);
+    // Reuse a single overlay beneath the labels for every transition. Image
+    // opacity blends directly instead of allocating an object-opacity layer.
+    wallpaper_fade_ = lv_image_create(content_);
+    lv_obj_set_size(wallpaper_fade_, 360, 360);
+    lv_obj_remove_flag(wallpaper_fade_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(wallpaper_fade_, LV_OBJ_FLAG_HIDDEN);
     if (snapshot_.settings.show_clock) {
         clock_ = Text(content_, "--:--", 80, 60, 200, 44, kText, 400, true, 52);
         date_ = Text(content_, "", 74, 116, 212, 14, 0xd8d5df, 400, true, 22);
-        PhotoLabelBackground(clock_);
-        PhotoLabelBackground(date_);
     }
     // Restore BAJI's top-centered carousel markers. Solid 6px shapes and a
     // narrow dark outline keep them readable on both light and dark photos.
-    int x = 160;
     for (int i = 0; i < 3; ++i) {
-        int width = i == wallpaper_ ? 16 : 6;
-        auto* dot = Box(content_, x, 56, width, 6, 0xffffff, LV_RADIUS_CIRCLE,
-                        i == wallpaper_ ? LV_OPA_COVER : 160);
+        auto* dot = Box(content_, 160, 56, 6, 6, 0xffffff, LV_RADIUS_CIRCLE, 160);
+        wallpaper_dots_[i] = dot;
         lv_obj_set_style_outline_width(dot, 1, 0);
         lv_obj_set_style_outline_color(dot, lv_color_black(), 0);
         lv_obj_set_style_outline_opa(dot, 160, 0);
+    }
+    RefreshWallpaperMarkers();
+}
+
+void WatchUi::NextWallpaper(int d) {
+    wallpaper_transition_.Step(d);
+    wallpaper_tick_ = lv_tick_get();
+    StartWallpaperTransition();
+}
+
+void WatchUi::RefreshWallpaperMarkers() {
+    int x = 160;
+    for (int i = 0; i < 3; ++i) {
+        const bool selected = i == wallpaper_transition_.To();
+        const int width = selected ? 16 : 6;
+        if (wallpaper_dots_[i]) {
+            lv_obj_set_x(wallpaper_dots_[i], x);
+            lv_obj_set_width(wallpaper_dots_[i], width);
+            lv_obj_set_style_bg_opa(wallpaper_dots_[i], selected ? LV_OPA_COVER : 160, 0);
+        }
         x += width + 6;
     }
 }
 
-void WatchUi::NextWallpaper(int d) {
-    const int previous = wallpaper_;
-    wallpaper_ = (wallpaper_ + d + 3) % 3;
-    wallpaper_tick_ = lv_tick_get();
-    if (page_ == Page::Standby) {
-        Render();
-        if (wallpaper_data_[previous] && awake_) {
-            auto* fade = lv_image_create(content_);
-            lv_image_set_src(fade, &wallpapers_[previous]);
-            lv_obj_set_size(fade, 360, 360);
-            lv_obj_remove_flag(fade, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_move_to_index(fade, 1);
-            lv_anim_t anim;
-            lv_anim_init(&anim);
-            lv_anim_set_var(&anim, fade);
-            lv_anim_set_values(&anim, 255, 0);
-            lv_anim_set_duration(&anim, 500);
-            lv_anim_set_exec_cb(&anim, [](void* obj, int32_t value) {
-                lv_obj_set_style_opa(static_cast<lv_obj_t*>(obj), value, 0);
-            });
-            lv_anim_set_completed_cb(
-                &anim, [](lv_anim_t* value) { lv_obj_delete(static_cast<lv_obj_t*>(value->var)); });
-            lv_anim_start(&anim);
-        }
+void WatchUi::StartWallpaperTransition() {
+    if (page_ != Page::Standby || !wallpaper_obj_ || !wallpaper_fade_ ||
+        wallpaper_transition_.Active() || !wallpaper_transition_.Pending() ||
+        !wallpaper_data_[wallpaper_transition_.Requested()])
+        return;
+    if (!awake_ || !wallpaper_data_[wallpaper_transition_.To()]) {
+        wallpaper_transition_.Settle();
+        lv_image_set_src(wallpaper_obj_, &wallpapers_[wallpaper_transition_.To()]);
+        RefreshWallpaperMarkers();
+        return;
+    }
+
+    wallpaper_transition_.Begin(lv_tick_get());
+    lv_image_set_src(wallpaper_fade_, &wallpapers_[wallpaper_transition_.From()]);
+    lv_obj_set_style_image_opa(wallpaper_fade_, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(wallpaper_fade_, LV_OBJ_FLAG_HIDDEN);
+    lv_image_set_src(wallpaper_obj_, &wallpapers_[wallpaper_transition_.To()]);
+    RefreshWallpaperMarkers();
+    UpdateAnimationTimer();
+}
+
+void WatchUi::AnimateWallpaper(uint32_t now) {
+    if (page_ != Page::Standby || !wallpaper_fade_ ||
+        !wallpaper_transition_.Active() || wallpaper_transition_.Paused())
+        return;
+    lv_obj_set_style_image_opa(wallpaper_fade_, wallpaper_transition_.Opacity(now), 0);
+    if (wallpaper_transition_.Complete(now)) {
+        lv_obj_add_flag(wallpaper_fade_, LV_OBJ_FLAG_HIDDEN);
+        StartWallpaperTransition();
+        UpdateAnimationTimer();
     }
 }

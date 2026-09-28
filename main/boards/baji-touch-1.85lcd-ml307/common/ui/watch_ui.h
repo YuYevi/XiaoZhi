@@ -2,6 +2,7 @@
 #include <lvgl.h>
 
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -92,6 +93,66 @@ class WatchUi {
     }
 
    private:
+    // Keep the two images of an in-flight fade fixed. Further gestures change
+    // only the requested destination, which starts after the current fade ends.
+    class WallpaperTransition {
+       public:
+        static constexpr uint32_t kDurationMs = 500;
+        static constexpr int kImageCount = 3;
+
+        void Step(int delta) {
+            requested_ = (requested_ + delta % kImageCount + kImageCount) % kImageCount;
+        }
+
+        bool Begin(uint32_t now) {
+            if (active_ || !Pending()) return false;
+            from_ = to_;
+            to_ = requested_;
+            started_at_ = now;
+            active_ = true;
+            paused_ = false;
+            return true;
+        }
+
+        bool Complete(uint32_t now) {
+            if (!active_ || paused_ || now - started_at_ < kDurationMs) return false;
+            active_ = false;
+            from_ = to_;
+            return true;
+        }
+
+        void SetPaused(bool paused, uint32_t now) {
+            if (!active_ || paused_ == paused) return;
+            if (paused) paused_at_ = now;
+            else started_at_ += now - paused_at_;
+            paused_ = paused;
+        }
+
+        // Page replacement discards its objects and opens at the latest request.
+        void Settle() {
+            from_ = to_ = requested_;
+            active_ = paused_ = false;
+        }
+
+        uint8_t Opacity(uint32_t now) const {
+            if (!active_) return 0;
+            const uint32_t elapsed = (paused_ ? paused_at_ : now) - started_at_;
+            return elapsed >= kDurationMs ? 0 : 255 - elapsed * 255 / kDurationMs;
+        }
+
+        int Requested() const { return requested_; }
+        int From() const { return from_; }
+        int To() const { return to_; }
+        bool Active() const { return active_; }
+        bool Paused() const { return paused_; }
+        bool Pending() const { return requested_ != to_; }
+
+       private:
+        int requested_ = 0, from_ = 0, to_ = 0;
+        uint32_t started_at_ = 0, paused_at_ = 0;
+        bool active_ = false, paused_ = false;
+    };
+
     struct AsyncState;
     lv_display_t* display_;
     const lv_font_t *fallback_font_, *fallback_icon_;
@@ -132,12 +193,15 @@ class WatchUi {
     bool waiting_for_answer_ = false;
     std::array<lv_image_dsc_t, 3> wallpapers_{};
     std::array<std::unique_ptr<uint8_t[]>, 3> wallpaper_data_;
+    lv_obj_t* wallpaper_fade_ = nullptr;
+    std::array<lv_obj_t*, 3> wallpaper_dots_{};
+    WallpaperTransition wallpaper_transition_;
     uint32_t asset_check_ = 0, wallpaper_tick_ = 0, toast_deadline_ = 0, reminder_token_ = 0,
              revision_ = 0, light_color_ = 0x9a91f2;
     uint32_t boot_started_at_ = 0;
     DeviceState boot_state_ = kDeviceStateUnknown;
     bool boot_later_visible_ = false;
-    int wallpaper_ = 0, remembered_volume_ = 50, remembered_brightness_ = 50;
+    int remembered_volume_ = 50, remembered_brightness_ = 50;
     bool awake_ = true, blocked_ = false, swiped_ = false, control_visible_ = false, power_save_ = false,
          light_applied_ = false, torch_ = false;
     bool control_drag_ = false, date_drag_ = false, alarm_drag_ = false;
@@ -190,6 +254,9 @@ class WatchUi {
     void RefreshReminder();
     void LoadWallpapers();
     void NextWallpaper(int);
+    void StartWallpaperTransition();
+    void AnimateWallpaper(uint32_t now);
+    void RefreshWallpaperMarkers();
     void Gesture(lv_event_t*);
     void SaveSettings(const WatchSettings&);
     void Submit(std::function<bool(std::string*)>, Page, const char* success = "");

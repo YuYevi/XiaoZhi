@@ -36,8 +36,13 @@ endfunction()
 
 # Run the board's charging/power-on gate before the native application entry.
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+    set_property(SOURCE "${BAJI_BOARD_DIR}/common/hardware/baji_lcd_transport.cc"
+        APPEND PROPERTY COMPILE_OPTIONS -O3)
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=app_main" APPEND)
     # Give this board's nested watch pages enough LVGL event/layout stack.
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lvgl_port_init" APPEND)
+    # Compose the watch frame before synchronizing its SPI transfer to LCD TE.
+    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lvgl_port_add_disp" APPEND)
+    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_draw_sw_blend_image_to_rgb565" APPEND)
     cmake_language(DEFER CALL baji_watch_asset_dependencies)
 endif()

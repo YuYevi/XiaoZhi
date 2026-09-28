@@ -17,7 +17,6 @@ size_t NextCharacter(const std::string& s, size_t from);
 size_t CharacterCount(const std::string& s);
 void SetLabelText(lv_obj_t* label, const char* text);
 void SingleLine(lv_obj_t* label);
-void PhotoLabelBackground(lv_obj_t* label);
 uint32_t BlendColor(uint32_t a, uint32_t b, float amount);
 std::tm Date(int64_t now);
 std::string Number(int n);

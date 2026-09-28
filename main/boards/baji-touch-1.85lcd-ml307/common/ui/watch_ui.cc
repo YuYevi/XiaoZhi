@@ -120,6 +120,9 @@ void WatchUi::Render() {
     }
     if (content_)
         lv_obj_delete(content_);
+    wallpaper_fade_ = nullptr;
+    wallpaper_dots_.fill(nullptr);
+    wallpaper_transition_.Settle();
     menu_plates_.fill(nullptr);
     menu_plate_count_ = 0;
     content_ = Box(root_, 0, 0, 360, 360, kBg);
@@ -199,6 +202,8 @@ void WatchUi::Render() {
 
 void WatchUi::UpdateAnimationTimer() {
     const bool covered = power_overlay_ || control_visible_ || modal_ || reminder_;
+    wallpaper_transition_.SetPaused(!awake_ || page_ != Page::Standby || covered, lv_tick_get());
+    const bool fading_wallpaper = page_ == Page::Standby && wallpaper_transition_.Active();
     const bool play_video = awake_ && page_ == Page::Chat && !covered;
     if (!play_video) WatchResources::SetVideoPlaying(false);
     if (page_ == Page::Chat)
@@ -206,11 +211,11 @@ void WatchUi::UpdateAnimationTimer() {
     if (play_video) WatchResources::SetVideoPlaying(true);
     if (!animation_timer_) return;
     if (!awake_ || (covered && !power_loader_) ||
-        (page_ != Page::Chat && page_ != Page::Menu && !wifi_loader_ && !power_loader_)) {
+        (page_ != Page::Chat && page_ != Page::Menu && !fading_wallpaper && !wifi_loader_ && !power_loader_)) {
         lv_timer_pause(animation_timer_);
         return;
     }
-    lv_timer_set_period(animation_timer_, power_loader_ || wifi_loader_ ? 33 : page_ == Page::Menu ? 1000 : 50);
+    lv_timer_set_period(animation_timer_, power_loader_ || wifi_loader_ || fading_wallpaper ? 33 : page_ == Page::Menu ? 1000 : 50);
     lv_timer_resume(animation_timer_);
 }
 
@@ -230,6 +235,7 @@ void WatchUi::Animate() {
     }
     if (wifi_loader_)
         lv_image_set_rotation(wifi_loader_, (now % 900) * 3600 / 900);
+    AnimateWallpaper(now);
     AnimateChat(now);
 }
 
