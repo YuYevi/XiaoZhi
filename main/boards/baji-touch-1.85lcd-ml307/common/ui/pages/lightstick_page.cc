@@ -13,24 +13,27 @@ void WatchUi::RenderLightstick() {
     PageTitle("应援灯", kPurple);
     auto* preview = Box(content_, 139, 91, 82, 82, light_color_, LV_RADIUS_CIRCLE);
     Border(preview, 0xffffff, 50);
-    auto* favorite = Button(content_, 118, 183, 124, 34, 0x28233a, 17, [this] {
+    auto* favorite = Button(content_, 132, 183, 96, 34, 0x28233a, 17, [this] {
         light_color_ = 0x9a91f2;
         Render();
     });
-    Border(favorite, kPurple, light_color_ == 0x9a91f2 ? 120 : 40);
-    lv_obj_align(Icon(favorite, "star", 0, 0, 18, kPurple), LV_ALIGN_LEFT_MID, 14, 0);
-    Text(favorite, "BAJI", 43, 6, 71, 14, 0xdfd6f4, 400, false, 22);
+    const bool favorite_selected = light_color_ == 0x9a91f2;
+    Border(favorite, favorite_selected ? 0xffffff : kPurple, favorite_selected ? 220 : 40,
+           favorite_selected ? 2 : 1);
+    lv_obj_align(Icon(favorite, "star", 0, 0, 16, kPurple), LV_ALIGN_LEFT_MID, 16, 0);
+    auto* favorite_label = Text(favorite, "BAJI", 0, 0, 44, 14, 0xdfd6f4, 400, true, 18);
+    lv_obj_align(favorite_label, LV_ALIGN_CENTER, 11, 0);
     Text(content_, "基础颜色", 110, 228, 140, 12, kMuted, 400, true, 18);
     constexpr uint32_t colors[] = {0xff0000, 0xff6600, 0xffdd00, 0x00cc44,
                                    0x00bbff, 0x8800ff, 0xff00bb, 0xffffff};
     for (int i = 0; i < 8; ++i) {
         const uint32_t color = colors[i];
         const bool selected = light_color_ == color;
-        auto* hit = Button(content_, 41 + i * 35, 250, 32, 36, kBg, 16, [this, color] {
+        auto* hit = Button(content_, 24 + i * 39, 249, 38, 38, kBg, 19, [this, color] {
             light_color_ = color;
             Render();
         });
-        auto* swatch = Box(hit, 2, 4, 28, 28, color, 14);
+        auto* swatch = Box(hit, 2, 2, 34, 34, color, LV_RADIUS_CIRCLE);
         Border(swatch, 0xffffff, selected ? 255 : 45, selected ? 2 : 1);
         if (selected) CenteredIcon(swatch, "check", 16, Light(color) ? 0x22222a : 0xffffff);
     }

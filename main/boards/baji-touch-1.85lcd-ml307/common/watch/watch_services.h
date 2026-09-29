@@ -14,7 +14,7 @@ struct WatchSettings {
     bool do_not_disturb = false;
     bool show_clock = true;
     bool power_save = false;
-    uint8_t language = 0;  // 0: Chinese, 1: English (watch UI only)
+    uint8_t language = 1;  // 0: Chinese, 1: English (watch UI only)
     uint8_t alarm_volume = 70;
 };
 
