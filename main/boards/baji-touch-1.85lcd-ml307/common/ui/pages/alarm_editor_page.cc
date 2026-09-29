@@ -12,7 +12,7 @@ void WatchUi::RenderAlarmEditor() {
     Text(content_, ":", 174, 150, 12, 32, 0xffdf9a, 400, true, 44);
     Text(content_, AlarmRepeat(alarm_draft_.weekdays, snapshot_.settings.language).c_str(),
          70, 240, 220, 12, kMuted, 400, true, 18);
-    constexpr const char* english_days[] = {"M", "T", "W", "T", "F", "S", "S"};
+    constexpr const char* english_days[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
     for (int d = 0; d < 7; ++d) {
         bool selected = alarm_draft_.weekdays & (1 << d);
         auto* day = Button(content_, 63 + d * 34, 263, 30, 30,

@@ -32,7 +32,7 @@ void WatchUi::RenderNetwork() {
             Render();
         }
     });
-    auto* title = Text(content_, wifi_phase_ == "list" ? "WLAN" : wifi_ssid_.c_str(),
+    auto* title = Text(content_, wifi_phase_ == "list" ? "WLAN" : "",
                        104, 50, 152, 16, kText, 400, true, 24);
     if (wifi_phase_ != "list") SetLabelText(title, wifi_ssid_.c_str());
     SingleLine(title);
@@ -102,7 +102,7 @@ void WatchUi::RenderNetwork() {
         for (int bar = 0; bar < 3; ++bar)
             Box(row, 14 + bar * 5, 34 - (6 + bar * 4), 3, 6 + bar * 4,
                 bar < bars ? kGreen : 0x3b3b45, 1);
-        auto* name = Text(row, network.ssid.c_str(), 44, 7, 154, 14,
+        auto* name = Text(row, "", 44, 7, 154, 14,
                            network.connected ? kBlue : kText, 400, false, 22);
         SetLabelText(name, network.ssid.c_str());
         SingleLine(name);
@@ -234,7 +234,7 @@ void WatchUi::RefreshWifiPassword() {
     const bool error = !wifi_error_.empty();
     lv_obj_set_style_bg_color(wifi_input_, lv_color_hex(error ? 0x281b24 : kSurface), 0);
     Border(wifi_input_, error ? kRose : kBlue, error ? 110 : 66);
-    const std::string hint = error ? wifi_error_ :
+    const std::string hint = error ? LocalizedText(wifi_error_, english) :
         (english ? "At least 8 characters · " : "至少 8 位 · ") +
             std::to_string(wifi_password_.size()) + "/63";
     SetLabelText(wifi_hint_, hint.c_str());

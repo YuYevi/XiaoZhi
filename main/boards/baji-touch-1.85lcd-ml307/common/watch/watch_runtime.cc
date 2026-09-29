@@ -531,7 +531,10 @@ void WatchRuntime::UpdateReminder(const WatchSnapshot& snapshot, int64_t now) {
 #endif
     app.GetAudioService().EnableWakeWordDetection(false);
     if (now >= next_tone_ && app.GetAudioService().IsPlaybackIdle()) {
-        app.PlaySound(Lang::Sounds::OGG_EXCLAMATION);
+        const bool use_radar = std::any_of(snapshot.reminders.begin(), snapshot.reminders.end(), [](const auto& item) {
+            return item.audible && (item.kind == WatchReminderKind::Alarm || item.kind == WatchReminderKind::Countdown);
+        });
+        app.PlaySound(use_radar ? Lang::Sounds::OGG_RADAR : Lang::Sounds::OGG_EXCLAMATION);
         next_tone_ = now + 3000000;
     }
 }

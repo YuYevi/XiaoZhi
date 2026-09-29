@@ -9,31 +9,6 @@
 
 using namespace baji::ui;
 
-namespace {
-const char* ChatStatusText(const char* text, bool english) {
-    // Native status strings use the firmware's compile-time language. Apply
-    // the watch's runtime language only at the display boundary, keeping the
-    // original status available for microphone and conversation state logic.
-    using namespace Lang::Strings;
-    struct Translation {
-        const char* native;
-        const char* chinese;
-        const char* english;
-    };
-    static constexpr Translation messages[] = {
-        {STANDBY, "待命", "Standby"},
-        {CONNECTING, "连接中...", "Connecting..."},
-        {LISTENING, "聆听中...", "Listening..."},
-        {SPEAKING, "说话中...", "Speaking..."},
-    };
-    for (const auto& message : messages) {
-        if (std::strcmp(text, message.native) == 0)
-            return english ? message.english : message.chinese;
-    }
-    return text;
-}
-}  // namespace
-
 void WatchUi::ShowChat(bool start) {
     if (power_overlay_ || IsBooting())
         return;
@@ -73,11 +48,13 @@ void WatchUi::RenderChat() {
     auto* user = Box(content_, 62, 240, 236, 38, 0, LV_RADIUS_CIRCLE, 64);
     Border(user, kRose, 40);
     auto* user_view = Box(user, 13, 7, 208, 22, 0, 0, 0);
-    user_label_ = Text(user_view, user_text_.c_str(), 0, 0, 208, 14, 0xfce7f3, 400, true, 22);
+    user_label_ = Text(user_view, "", 0, 0, 208, 14, 0xfce7f3, 400, true, 22);
+    SetLabelText(user_label_, user_text_.c_str());
     auto* answer = Box(content_, 62, 240, 236, 38, 0, LV_RADIUS_CIRCLE, 64);
     Border(answer, 0xffffff, 15);
     auto* answer_view = Box(answer, 13, 7, 208, 22, 0, 0, 0);
-    answer_label_ = Text(answer_view, answer_text_.c_str(), 2, 0, 204, 14, 0xffffff, 400, true, 22);
+    answer_label_ = Text(answer_view, "", 2, 0, 204, 14, 0xffffff, 400, true, 22);
+    SetLabelText(answer_label_, answer_text_.c_str());
     answer_cursor_ = Box(answer_view, 1, 5, 2, 12, kRose, 1);
     thinking_ = Box(content_, 145, 240, 70, 32, 0, LV_RADIUS_CIRCLE, 64);
     Border(thinking_, 0xffffff, 15);
@@ -182,12 +159,13 @@ void WatchUi::RefreshChat(const std::string& time) {
             else if (state == kDeviceStateSpeaking || state == kDeviceStateNotifying)
                 header = Lang::Strings::SPEAKING;
         }
-        header = ChatStatusText(header, snapshot_.settings.language != 0);
+        // Translate at display time; keep the native status for state logic.
+        const std::string localized_header = LocalizedText(header, snapshot_.settings.language != 0);
         // DOT rewrites the label's tail. Cache the original text so long status
         // messages are not restored and laid out on every animation frame.
-        if (chat_header_text_ != header) {
-            SetLabelText(chat_header_, header);
-            chat_header_text_ = header;
+        if (chat_header_text_ != localized_header) {
+            SetLabelText(chat_header_, localized_header.c_str());
+            chat_header_text_ = localized_header;
         }
         const lv_opa_t opacity = idle ? 191 : LV_OPA_COVER;
         if (lv_obj_get_style_text_opa(chat_header_, LV_PART_MAIN) != opacity)

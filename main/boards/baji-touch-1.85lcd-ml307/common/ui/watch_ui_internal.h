@@ -13,6 +13,8 @@ inline constexpr uint32_t kSurface = 0x191920, kMuted = 0x9898a5, kText = 0xf2f1
 inline constexpr uint32_t kRose = 0xf9a8d4, kGreen = 0x6ee7b7, kBlue = 0x93c5fd, kPurple = 0xc4b5fd;
 inline constexpr const char* kDays[] = {"日", "一", "二", "三", "四", "五", "六"};
 
+// Localize known system text only; user content and network names stay raw.
+std::string LocalizedText(const std::string& text, bool english);
 size_t NextCharacter(const std::string& s, size_t from);
 size_t CharacterCount(const std::string& s);
 void SetLabelText(lv_obj_t* label, const char* text);

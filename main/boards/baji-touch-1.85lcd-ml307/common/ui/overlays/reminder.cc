@@ -28,10 +28,15 @@ void WatchUi::RefreshReminder() {
     std::string titles;
     for (const auto& reminder : snapshot_.reminders) {
         if (!titles.empty()) titles += '\n';
-        titles += reminder.title;
+        const bool system_title =
+            (reminder.kind == WatchReminderKind::Countdown && reminder.title == "倒计时结束") ||
+            (reminder.kind == WatchReminderKind::Alarm && reminder.title == "闹钟");
+        titles += system_title ? LocalizedText(reminder.title, snapshot_.settings.language != 0)
+                               : reminder.title;
     }
     auto* area = ScrollList(reminder_, 72, 177, 216, 66);
-    Text(area, titles.c_str(), 0, 0, 216, 14, kText, 400, true, 22);
+    auto* title_label = Text(area, "", 0, 0, 216, 14, kText, 400, true, 22);
+    SetLabelText(title_label, titles.c_str());
     auto* stop = Button(reminder_, 76, 270, 100, 40, 0x624924, 20, [this] {
         auto* service = &services_;
         Submit([service](std::string*) { service->DismissReminders(); return true; }, page_);

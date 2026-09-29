@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <utility>
+#include <string_view>
+#include "assets/lang_config.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
 #include "ui/watch_resources.h"
 
@@ -67,7 +69,135 @@ void Dispatch(lv_event_t* e) {
     fn(e);
 }
 
-const char* English(const char* text) {
+}  // namespace
+
+namespace baji::ui {
+std::string LocalizedText(const std::string& text, bool english) {
+    using namespace Lang::Strings;
+    struct Translation {
+        const char* native;
+        const char* chinese;
+        const char* english;
+    };
+    static constexpr Translation messages[] = {
+        {INITIALIZING, "正在初始化...", "Initializing..."},
+        {LOADING_PROTOCOL, "登录服务器...", "Logging in..."},
+        {DETECTING_MODULE, "检测模组...", "Detecting modem..."},
+        {REGISTERING_NETWORK, "等待网络...", "Waiting for network..."},
+        {CHECKING_NEW_VERSION, "检查新版本...", "Checking for updates..."},
+        {SCANNING_WIFI, "扫描 Wi-Fi...", "Scanning Wi-Fi..."},
+        {ENTERING_WIFI_CONFIG_MODE, "进入配网模式...", "Opening Wi-Fi setup..."},
+        {WIFI_CONFIG_MODE, "配网模式", "Wi-Fi setup"},
+        {ACTIVATION, "激活设备", "Activate device"},
+        {CONNECTING, "连接中...", "Connecting..."},
+        {STANDBY, "待命", "Standby"},
+        {LISTENING, "聆听中...", "Listening..."},
+        {SPEAKING, "说话中...", "Speaking..."},
+        {ERROR, "错误", "Error"},
+        {WARNING, "警告", "Warning"},
+        {INFO, "信息", "Information"},
+        {PIN_ERROR, "请插入 SIM 卡", "Please insert a SIM card"},
+        {REG_ERROR, "无法接入网络，请检查流量卡状态", "Cannot connect. Check your SIM card"},
+        {MODEM_INIT_ERROR, "模组初始化失败", "Modem initialization failed"},
+        {SERVER_NOT_FOUND, "正在寻找可用服务", "Looking for available service"},
+        {SERVER_NOT_CONNECTED, "无法连接服务，请稍后再试", "Cannot connect to service. Try again later"},
+        {SERVER_TIMEOUT, "等待响应超时", "Response timed out"},
+        {SERVER_ERROR, "发送失败，请检查网络", "Sending failed. Check your network"},
+        {OTA_UPGRADE, "OTA 升级", "Firmware update"},
+        {UPGRADING, "正在升级系统...", "Updating system..."},
+        {UPGRADE_FAILED, "升级失败", "Update failed"},
+        {LOADING_ASSETS, "加载资源...", "Loading resources..."},
+        {DOWNLOAD_ASSETS_FAILED, "下载资源失败", "Resource download failed"},
+        {PLEASE_WAIT, "请稍候...", "Please wait..."},
+        {SWITCH_TO_WIFI_NETWORK, "切换到 Wi-Fi...", "Switching to Wi-Fi..."},
+        {SWITCH_TO_4G_NETWORK, "切换到 4G...", "Switching to mobile data..."},
+        {CONNECTION_SUCCESSFUL, "连接成功", "Connected"},
+        {BATTERY_CHARGING, "正在充电", "Charging"},
+        {BATTERY_FULL, "电量已满", "Battery full"},
+        {BATTERY_LOW, "电量不足", "Low battery"},
+        {BATTERY_NEED_CHARGE, "电量低，请充电", "Low battery. Please charge"},
+        {MAX_VOLUME, "最大音量", "Maximum volume"},
+        {MUTED, "已静音", "Muted"},
+        {RTC_MODE_OFF, "AEC 关闭", "AEC off"},
+        {RTC_MODE_ON, "AEC 开启", "AEC on"},
+        {FLIGHT_MODE_OFF, "飞行模式已关闭", "Airplane mode off"},
+        {FLIGHT_MODE_ON, "飞行模式已开启", "Airplane mode on"},
+        {HELLO_MY_FRIEND, "你好，我的朋友！", "Hello, my friend!"},
+        {"Upgrade successful, rebooting...", "升级成功，正在重启...", "Update complete. Restarting..."},
+    };
+    for (const auto& message : messages) {
+        if (text == message.native || text == message.chinese)
+            return english ? message.english : message.chinese;
+    }
+
+    // Translate only known framing. SSIDs, URLs, codes and server payloads
+    // must survive the runtime language change without modification.
+    const std::string_view source(text);
+    const auto starts_with = [source](std::string_view prefix) {
+        return !prefix.empty() && source.substr(0, prefix.size()) == prefix;
+    };
+    const std::string_view hotspot = CONNECT_TO_HOTSPOT;
+    if (starts_with(hotspot)) {
+        const std::string_view browser = ACCESS_VIA_BROWSER;
+        const auto split = source.find(browser, hotspot.size());
+        if (split != std::string_view::npos) {
+            return std::string(english ? "Connect your phone to " : "手机连接热点 ") +
+                   std::string(source.substr(hotspot.size(), split - hotspot.size())) +
+                   (english ? "\nOpen " : "\n浏览器访问 ") +
+                   std::string(source.substr(split + browser.size()));
+        }
+    }
+    // This notification has both a fixed prefix and suffix around an SSID.
+    // Handle it before CONNECTED_TO so its suffix cannot be mistaken for a name.
+    constexpr std::string_view saved_prefix = "已连接 ";
+    constexpr std::string_view saved_suffix = "，目标网络已保存";
+    if (starts_with(saved_prefix) && source.size() >= saved_prefix.size() + saved_suffix.size() &&
+        source.substr(source.size() - saved_suffix.size()) == saved_suffix) {
+        const auto ssid = source.substr(saved_prefix.size(),
+            source.size() - saved_prefix.size() - saved_suffix.size());
+        return english ? "Connected to " + std::string(ssid) + "\nTarget network saved" : text;
+    }
+    static constexpr Translation prefixes[] = {
+        {CONNECT_TO, "连接 ", "Connecting to "},
+        {CONNECTED_TO, "已连接 ", "Connected to "},
+        {VERSION, "版本 ", "Version "},
+        {NEW_VERSION, "新版本 ", "New version "},
+    };
+    for (const auto& prefix : prefixes) {
+        const std::string_view native = prefix.native;
+        if (starts_with(native))
+            return std::string(english ? prefix.english : prefix.chinese) +
+                   std::string(source.substr(native.size()));
+    }
+    const std::string_view volume_prefix = VOLUME;
+    if (starts_with(volume_prefix)) {
+        const auto value = source.substr(volume_prefix.size());
+        if (!value.empty() && value.find_first_not_of("0123456789") == std::string_view::npos)
+            return std::string(english ? "Volume " : "音量 ") + std::string(value);
+    }
+    const std::string_view retry_format = CHECK_NEW_VERSION_FAILED;
+    const auto delay_offset = retry_format.find("%d");
+    const auto detail_offset = retry_format.find("%s");
+    if (delay_offset != std::string_view::npos && detail_offset != std::string_view::npos &&
+        detail_offset > delay_offset + 2 && starts_with(retry_format.substr(0, delay_offset))) {
+        const auto separator = retry_format.substr(delay_offset + 2, detail_offset - delay_offset - 2);
+        const auto split = source.find(separator, delay_offset);
+        if (split != std::string_view::npos) {
+            const auto seconds = source.substr(delay_offset, split - delay_offset);
+            if (!seconds.empty() && seconds.find_first_not_of("0123456789") == std::string_view::npos) {
+                return std::string(english ? "Update check failed; retry in " : "检查新版本失败，将在 ") +
+                       std::string(seconds) + (english ? " seconds:\n" : " 秒后重试：\n") +
+                       std::string(source.substr(split + separator.size()));
+            }
+        }
+    }
+    const std::string_view assets_format = FOUND_NEW_ASSETS;
+    const auto assets_offset = assets_format.find("%s");
+    if (assets_offset != std::string_view::npos && starts_with(assets_format.substr(0, assets_offset)))
+        return std::string(english ? "Found new resources: " : "发现新资源: ") +
+               std::string(source.substr(assets_offset));
+    if (!english) return text;
+
     static const std::pair<const char*, const char*> words[] = {
         {"设置", "Settings"},
         {"显示设置", "Display"},
@@ -157,15 +287,92 @@ const char* English(const char* text) {
         {"设备将重启以切换网络。", "Restart to switch network."},
         {"设备将重启并关闭网络。", "Restart with network off."},
         {"切换网络需要重新启动。", "Restart to switch network."},
-        {"重新启动并检查固件更新？", "Restart to check for updates?"}};
+        {"重新启动并检查固件更新？", "Restart to check for updates?"},
+        {"日程", "Event"},
+        {"倒计时结束", "Timer finished"},
+        {"无网络", "Network off"},
+        {"Wi-Fi 未连接", "Wi-Fi disconnected"},
+        {"4G 未连接", "4G disconnected"},
+        {"待校时", "Awaiting time sync"},
+        {"思考中...", "Thinking..."},
+        {"设备忙，请稍后切换网络", "Device busy. Switch networks later"},
+        {"网络设置保存失败，请重试", "Cannot save network. Try again"},
+        {"请结束对话或等待系统任务完成", "End chat or wait for system tasks"},
+        {"正在连接4G，请稍候", "Connecting to 4G. Please wait"},
+        {"切换4G？短按音量+确认", "Switch to 4G? Press Volume +"},
+        {"切换WiFi？短按音量+确认", "Switch to Wi-Fi? Press Volume +"},
+        {"请先开启 WLAN", "Turn on Wi-Fi first"},
+        {"请先切换 Wi-Fi，并结束当前对话", "Switch to Wi-Fi and end chat first"},
+        {"电量偏低，请及时充电", "Low battery. Please charge"},
+        {"请先关闭提醒", "Dismiss the reminder first"},
+        {"系统任务结束后可息屏", "Wait for system tasks to finish"},
+        {"正在更新，请完成后重试", "Updating. Try again when finished"},
+        {"请先开启 WLAN 或移动数据", "Turn on Wi-Fi or mobile data first"},
+        {"正在准备网络，请稍候", "Preparing network. Please wait"},
+        {"设备忙，请稍后重试", "Device busy. Try again later"},
+        {"已重置手表数据，Wi-Fi 已保留", "Watch reset. Wi-Fi settings kept"},
+        {"配网服务尚未就绪，请重试", "Wi-Fi setup not ready. Try again"},
+        {"配网服务尚未就绪，请稍后重试", "Wi-Fi setup not ready. Try later"},
+        {"配网服务地址不匹配", "Wi-Fi setup address mismatch"},
+        {"无法创建配网请求", "Cannot create Wi-Fi setup request"},
+        {"配网请求失败或超时，请重试", "Wi-Fi setup failed. Try again"},
+        {"配网请求超时，请重试", "Wi-Fi setup timed out. Try again"},
+        {"读取配网服务失败，请重试", "Cannot read Wi-Fi setup. Try again"},
+        {"配网响应过大，请重试", "Wi-Fi reply too large. Try again"},
+        {"请先切换 Wi-Fi 模式", "Switch to Wi-Fi mode first"},
+        {"Wi-Fi 正在初始化", "Wi-Fi is starting"},
+        {"请先结束对话或等待连接完成", "End chat or wait for connection"},
+        {"附近网络扫描暂不可用，可用手机配网", "Scan unavailable. Set up by phone"},
+        {"无法读取附近网络，请重试", "Cannot read networks. Try again"},
+        {"无法启动扫描，请重试", "Cannot start scan. Try again"},
+        {"名称最多31字节，密码最多63字节", "Name: max 31 bytes; password: 63"},
+        {"正在处理 Wi-Fi，请稍后重试", "Wi-Fi busy. Try again later"},
+        {"请结束对话或等待 Wi-Fi 就绪", "End chat or wait for Wi-Fi"},
+        {"已保存10个网络，请先在手机配网页管理网络", "10 networks saved. Manage by phone"},
+        {"无法创建连接请求", "Cannot create connection request"},
+        {"连接失败，请检查密码和信号后重试", "Failed. Check password and signal"},
+        {"连接参数保存失败，请重试", "Cannot save Wi-Fi. Try again"},
+        {"无法启动连接，请重试", "Cannot start connection. Try again"},
+        {"连接超时，可检查密码后重试", "Timed out. Check password and retry"},
+        {"提醒存储尚未初始化", "Reminder storage not ready"},
+        {"设置数值超出范围", "Setting value out of range"},
+        {"闹钟时间或标题无效（标题最多60字节）", "Invalid alarm time or title\nTitle limit: 60 bytes"},
+        {"闹钟已不存在", "Alarm no longer exists"},
+        {"最多保存8个闹钟", "Limit: 8 alarms"},
+        {"提醒编号已耗尽", "No reminder IDs available"},
+        {"日程日期或标题无效（标题最多60字节）", "Invalid event date or title\nTitle limit: 60 bytes"},
+        {"日程已不存在", "Event no longer exists"},
+        {"最多保存16条日程", "Limit: 16 events"},
+        {"日期或时间无效", "Invalid date or time"},
+        {"设置系统时间失败", "Cannot set system time"},
+        {"倒计时范围为1秒至24小时", "Timer range: 1 second to 24 hours"},
+        {"没有运行中的倒计时", "No running timer"},
+        {"倒计时已到时", "Timer has finished"},
+        {"没有暂停的倒计时", "No paused timer"},
+        {"稍后提醒范围为1秒至1小时", "Snooze range: 1 second to 1 hour"},
+        {"没有正在响铃的提醒", "No active reminder"},
+        {"日程日期无效", "Invalid event date"},
+        {"未知倒计时操作", "Unknown timer action"},
+    };
     for (const auto& word : words)
-        if (std::strcmp(text, word.first) == 0)
-            return word.second;
+        if (text == word.first) return word.second;
+
+    // Service errors append the ESP-IDF error token. Translate only the fixed
+    // framing and keep that token byte-for-byte for troubleshooting.
+    static constexpr std::pair<std::string_view, std::string_view> errors[] = {
+        {"保存失败: ", "Save failed: "},
+        {"读取提醒失败: ", "Cannot load reminders: "},
+        {"提醒服务启动失败: ", "Cannot start reminders: "},
+    };
+    for (const auto& error : errors) {
+        if (!starts_with(error.first)) continue;
+        const auto detail = source.substr(error.first.size());
+        if (detail.substr(0, 4) == "ESP_" || detail.substr(0, 2) == "0x")
+            return std::string(error.second) + std::string(detail);
+    }
     return text;
 }
-}  // namespace
 
-namespace baji::ui {
 size_t NextCharacter(const std::string& s, size_t from) {
     if (from >= s.size())
         return s.size();
@@ -228,7 +435,7 @@ std::string AlarmRepeat(uint8_t weekdays, bool english) {
     if (weekdays == 0x7f) return english ? "Every day" : "每天";
     if (weekdays == 0x1f) return english ? "Weekdays" : "工作日";
     if (weekdays == 0x60) return english ? "Weekends" : "周末";
-    constexpr const char* short_days[] = {"M", "T", "W", "T", "F", "S", "S"};
+    constexpr const char* short_days[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
     std::string value;
     for (int d = 0; d < 7; ++d) {
         if (!(weekdays & (1 << d))) continue;
@@ -299,11 +506,11 @@ lv_obj_t* WatchUi::Box(lv_obj_t* p, int x, int y, int w, int h, uint32_t c, int 
 lv_obj_t* WatchUi::Text(lv_obj_t* p, const char* s, int x, int y, int w, float size, uint32_t color,
                         int weight, bool center, float line_height, float cjk_size) {
     auto* o = lv_label_create(p);
-    const char* text = snapshot_.settings.language ? English(s) : s;
-    const bool chinese = HasCjk(text);
+    const std::string text = LocalizedText(s ? s : "", snapshot_.settings.language != 0);
+    const bool chinese = HasCjk(text.c_str());
     if (chinese)
         size = std::max(size, cjk_size);
-    SetLabelText(o, text);
+    SetLabelText(o, text.c_str());
     // CSS places font metrics inside a line box using half-leading. A 41px
     // Segoe face has 56px natural metrics, so treating y as the font top put
     // the clock about eight pixels too low in the previous implementation.

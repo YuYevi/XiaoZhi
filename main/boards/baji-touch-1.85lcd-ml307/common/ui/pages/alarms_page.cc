@@ -27,7 +27,8 @@ void WatchUi::RenderAlarms() {
         lv_obj_set_style_text_letter_space(time, -1, 0);
         auto repeat = AlarmRepeat(alarm.weekdays, snapshot_.settings.language);
         if (!alarm.title.empty() && alarm.title != "闹钟") repeat = alarm.title + " · " + repeat;
-        auto* detail = Text(card, repeat.c_str(), 17, 42, 157, 12, kMuted, 400, false, 18);
+        auto* detail = Text(card, "", 17, 42, 157, 12, kMuted, 400, false, 18);
+        SetLabelText(detail, repeat.c_str());
         SingleLine(detail);
         Switch(card, alarm.enabled, 0xb88b36, [this, alarm] {
             auto value = alarm;

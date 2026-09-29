@@ -68,7 +68,8 @@ void WatchUi::RenderSettings() {
     arrow(item);
 
     item = row("info", "关于手表", kMuted, [this] {
-        const std::string details = "BAJI Watch\n\n" + device_.firmware + "\n" + device_.network;
+        const std::string details = "BAJI Watch\n\n" + device_.firmware + "\n" +
+            LocalizedText(device_.network, snapshot_.settings.language != 0);
         SetSystemMessage(details.c_str(), 0);
     });
     detail(item, device_.firmware.c_str());

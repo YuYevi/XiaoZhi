@@ -339,7 +339,9 @@ void WatchUi::GoBack() {
     }
     switch (page_) {
         case Page::Boot:
+            break;
         case Page::Standby:
+            Emit(Action::Sleep);
             break;
         case Page::Menu:
             Navigate(Page::Standby);
