@@ -277,10 +277,13 @@ AI 状态在显示时读取表盘的运行时语言设置，将原生 `STANDBY/C
 
 ## 编译与验证
 
-使用 ESP-IDF 5.5.4、ESP32-S3、16 MB Flash、八线 PSRAM，分区为 `partitions/v2/16m.csv`。本次图像修复使用独立构建目录 `build/display_quality_firmware`；原 `build/` 存在 CMake 生成器缓存冲突，旧构建产物予以保留。
+当前硬件使用 ESP-IDF 5.5.4、ESP32-S3、32 MB 四线 Flash、8 MB 八线 PSRAM，分区为 `partitions/v2/32m.csv`：两个 OTA 应用分区各 4 MiB，assets 从 `0xA00000` 开始、大小 16 MiB。默认配置、当前 `sdkconfig` 和板级构建配置均使用 32 MB。为使 CPU 能映射超过 16 MiB 地址的资源，同时开启 `CONFIG_IDF_EXPERIMENTAL_FEATURES` 和 `CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH`；后者在 ESP-IDF 5.5.4 中属于实验功能，需随 Flash 芯片验证。
+
+32 MB 升级使用独立构建目录 `build/flash32`。首次从旧 16 MB 布局升级时必须同步烧录 bootloader、分区表、应用和 assets；旧布局的 NVS 地址不同，应先备份并迁移用户设置，不能仅通过应用 OTA 更换分区表。此前图像修复的构建目录和下方 16 MB 验证记录属于历史版本。
 
 ```powershell
-idf.py -B build/display_quality_firmware build
+idf.py -B build/flash32 build
+idf.py -B build/flash32 -p COM6 flash
 ```
 
 2026-09-23 壁纸横纹、交互响应及其余页面复查修复已完成编译验证：`build/watch-response-firmware/xiaozhi.bin` 为3,176,384字节，应用分区剩余约23%；同目录 `generated_assets.bin` 为6,038,558字节，8 MiB 资源分区剩余2,350,050字节。当时 app SHA-256 为 `56d901a5d333267e1eb5c139da0d3a891cecdb0a5bd8424b650651e45750155f`。
