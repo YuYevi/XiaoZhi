@@ -22,23 +22,33 @@ const char* BootStateText(DeviceState state, bool english) {
 }
 }  // namespace
 
-void WatchUi::RenderBoot() {
+void WatchUi::RenderBootSplash() {
     const bool english = snapshot_.settings.language != 0;
-    auto* mark = Box(content_, 145, 50, 70, 70, BlendColor(kBg, kRose, .16f), 24);
+    auto* mark = Box(content_, 145, 78, 70, 70, BlendColor(kBg, kRose, .16f), 24);
     Border(mark, kRose, 75);
     CenteredIcon(mark, "assistant", 36, kRose);
-    Text(content_, "BAJI", 60, 132, 240, 27, kText, 700, true, 34);
-    Text(content_, english ? "AI Smartwatch" : "AI 智能手表", 60, 167, 240, 14, kMuted, 400, true, 22);
+    Text(content_, "BAJI", 60, 160, 240, 27, kText, 700, true, 34);
+    Text(content_, english ? "AI Smartwatch" : "AI 智能手表", 60, 195, 240, 14, kMuted, 400, true, 22);
+    auto* track = Box(content_, 118, 244, 124, 3, 0x2a2934, 2);
+    Box(track, 0, 0, 28, 3, kRose, 2);
+    Text(content_, english ? "Loading" : "正在启动", 60, 260, 240, 13, kMuted, 400, true, 20);
+}
 
-    auto* track = Box(content_, 92, 202, 176, 4, 0x2a2934, 2);
+void WatchUi::RenderBootFlow() {
+    const bool english = snapshot_.settings.language != 0;
+    Text(content_, english ? "Device setup" : "设备准备中", 60, 64, 240, 22, kText, 600, true, 30);
+    Text(content_, english ? "Network and account status" : "联网、配网与设备激活", 60, 96, 240, 14,
+         kMuted, 400, true, 22);
+
+    auto* track = Box(content_, 92, 132, 176, 4, 0x2a2934, 2);
     boot_progress_ = Box(track, 0, 0, 18, 4, kRose, 2);
     boot_status_label_ = Text(content_, BootStateText(boot_state_, english),
-                              60, 217, 240, 14, kText, 400, true, 22);
+                              60, 147, 240, 14, kText, 400, true, 22);
     // Long pairing messages and activation codes remain available by scrolling.
     // Do not truncate them with the normal transient-toast label mode.
-    auto* details = ScrollList(content_, 64, 246, 232, 52);
+    auto* details = ScrollList(content_, 64, 177, 232, 78);
     boot_message_ = Text(details, "", 0, 0, 232, 14, kMuted, 400, true, 20);
-    boot_later_ = Button(content_, 122, 310, 116, 28, kSurface, 14,
+    boot_later_ = Button(content_, 122, 294, 116, 28, kSurface, 14,
                          [this] {
         if (Application::GetInstance().GetDeviceState() != kDeviceStateUpgrading)
             Navigate(Page::Standby);
@@ -51,7 +61,7 @@ void WatchUi::RenderBoot() {
 }
 
 void WatchUi::RefreshBoot() {
-    if (!IsBooting()) return;
+    if (page_ != Page::BootFlow) return;
     const bool english = snapshot_.settings.language != 0;
     const uint32_t elapsed = lv_tick_get() - boot_started_at_;
     const bool upgrading = boot_state_ == kDeviceStateUpgrading;
@@ -95,8 +105,8 @@ void WatchUi::UpdateBootState(DeviceState state) {
     if (state != boot_state_) boot_status_.clear();
     boot_state_ = state;
     RefreshBoot();
-    const uint32_t elapsed = lv_tick_get() - boot_started_at_;
-    if (state == kDeviceStateIdle && elapsed >= 1500) {
+    const uint32_t flow_elapsed = lv_tick_get() - boot_flow_started_at_;
+    if (page_ == Page::BootFlow && state == kDeviceStateIdle && flow_elapsed >= 400) {
         Navigate(Page::Standby);
     }
 }

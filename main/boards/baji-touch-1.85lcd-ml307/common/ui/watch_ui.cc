@@ -140,8 +140,11 @@ void WatchUi::Render() {
     thinking_dots_.fill(nullptr);
     // Central page routing; page implementations live in pages/.
     switch (page_) {
-        case Page::Boot:
-            RenderBoot();
+        case Page::BootSplash:
+            RenderBootSplash();
+            break;
+        case Page::BootFlow:
+            RenderBootFlow();
             break;
         case Page::Standby:
             RenderStandby();
@@ -338,7 +341,8 @@ void WatchUi::GoBack() {
         return;
     }
     switch (page_) {
-        case Page::Boot:
+        case Page::BootSplash:
+        case Page::BootFlow:
             break;
         case Page::Standby:
             Emit(Action::Sleep);
@@ -520,7 +524,13 @@ void WatchUi::Tick() {
     if (!root_)
         return;
     if (IsBooting()) {
-        UpdateBootState(Application::GetInstance().GetDeviceState());
+        const uint32_t now = lv_tick_get();
+        if (page_ == Page::BootSplash && now - boot_started_at_ >= 1500) {
+            boot_flow_started_at_ = now;
+            Navigate(Page::BootFlow);
+        }
+        if (IsBooting())
+            UpdateBootState(Application::GetInstance().GetDeviceState());
         return;
     }
     bool done = false, ok = false;

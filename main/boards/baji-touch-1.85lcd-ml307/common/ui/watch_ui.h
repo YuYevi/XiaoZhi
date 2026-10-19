@@ -16,7 +16,8 @@
 class WatchUi {
    public:
     enum class Page {
-        Boot,
+        BootSplash,
+        BootFlow,
         Standby,
         Menu,
         Chat,
@@ -73,7 +74,7 @@ class WatchUi {
     void SetEmotion(const char*);
     void SetSystemMessage(const char*, uint32_t duration_ms = 5000);
     void UpdateBootState(DeviceState state);
-    bool IsBooting() const { return page_ == Page::Boot; }
+    bool IsBooting() const { return page_ == Page::BootSplash || page_ == Page::BootFlow; }
     void SetAwake(bool);
     void ShowPowerMenu(bool show);
     bool IsPowerMenuOpen() const { return power_overlay_ && !power_transition_; }
@@ -161,7 +162,7 @@ class WatchUi {
     std::shared_ptr<AsyncState> async_;
     WatchSnapshot snapshot_;
     DeviceSnapshot device_;
-    Page page_ = Page::Boot, chat_return_ = Page::Standby, menu_destination_ = Page::Menu;
+    Page page_ = Page::BootSplash, chat_return_ = Page::Standby, menu_destination_ = Page::Menu;
     lv_obj_t *root_ = nullptr, *content_ = nullptr, *control_ = nullptr, *modal_ = nullptr,
              *reminder_ = nullptr, *toast_ = nullptr, *status_ = nullptr;
     lv_obj_t* page_scroll_ = nullptr;
@@ -199,6 +200,7 @@ class WatchUi {
     uint32_t asset_check_ = 0, wallpaper_tick_ = 0, toast_deadline_ = 0, reminder_token_ = 0,
              revision_ = 0, light_color_ = 0x9a91f2;
     uint32_t boot_started_at_ = 0;
+    uint32_t boot_flow_started_at_ = 0;
     DeviceState boot_state_ = kDeviceStateUnknown;
     bool boot_later_visible_ = false;
     int remembered_volume_ = 50, remembered_brightness_ = 50;
@@ -220,7 +222,8 @@ class WatchUi {
     void Navigate(Page);
     void Render();
     void RenderStandby();
-    void RenderBoot();
+    void RenderBootSplash();
+    void RenderBootFlow();
     void RefreshBoot();
     void RenderMenu();
     lv_obj_t* MenuCard(int x, int y, int width, int height, uint32_t accent,
