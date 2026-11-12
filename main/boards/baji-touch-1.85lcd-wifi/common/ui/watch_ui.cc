@@ -447,7 +447,7 @@ void WatchUi::Gesture(lv_event_t* e) {
             lv_obj_set_x(alarm_drag_row_, std::clamp(alarm_drag_start_x_ + dx, -62, 0));
             return;
         }
-        if ((!blocked_ || control_visible_) && !date_drag_ && std::abs(dy) > 8 &&
+        if (!blocked_ && !date_drag_ && std::abs(dy) > 8 &&
             std::abs(dy) > std::abs(dx) * 1.2 &&
             ((!control_visible_ && press_.y <= 115 && dy > 0) || (control_visible_ && dy < 0))) {
             if (!control_visible_)
