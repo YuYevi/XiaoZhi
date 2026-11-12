@@ -9,7 +9,6 @@ void WatchUi::RenderSettings() {
     auto* list = page_scroll_ = ScrollList(content_, 60, 96, 240, 210);
     const bool english = snapshot_.settings.language != 0;
     const bool wifi = device_.network.find("Wi-Fi") != std::string::npos;
-    const bool cell = device_.network.find("4G") != std::string::npos;
     int y = 0;
     auto row = [&](const char* icon, const char* title, uint32_t accent,
                    std::function<void()> action) {
@@ -36,18 +35,9 @@ void WatchUi::RenderSettings() {
                                   english ? "Offline" : "未连接", kMuted, 120);
     if (device_.wifi_connected) SetLabelText(settings_wifi_label_, device_.wifi_ssid.c_str());
     Switch(item, wifi, 0x3b6ea8, [this, wifi] {
-        Confirm("WLAN", wifi ? "设备将重启并关闭网络。" : "设备将重启以切换网络。",
+        Confirm("WLAN", wifi ? "设备将重启并关闭 WLAN。" : "设备将重启并开启 WLAN。",
                 [this, wifi] { Emit(Action::SetNetwork, wifi ? -1 : 0); });
     });
-
-    auto toggle_cell = [this, cell] {
-        Confirm("移动数据", cell ? "设备将重启并关闭网络。" : "设备将重启以切换网络。",
-                [this, cell] { Emit(Action::SetNetwork, cell ? -1 : 1); });
-    };
-    item = row("signal", "移动数据", cell ? kBlue : kMuted, toggle_cell);
-    detail(item, cell ? (english ? "4G enabled" : "4G 已开启") :
-                       (english ? "4G disabled" : "4G 已关闭"), kMuted, 120);
-    Switch(item, cell, 0x3b6ea8, toggle_cell);
 
     item = row("sun", "显示设置", kPurple, [this] { Navigate(Page::DisplaySettings); });
     detail(item, "熄屏与待机显示");

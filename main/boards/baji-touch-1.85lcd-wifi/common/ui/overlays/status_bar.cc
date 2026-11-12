@@ -50,29 +50,18 @@ void WatchUi::RenderStatus() {
         lv_obj_delete(status_);
     // Rounded signals and a compact battery, drawn at native pixel sizes.
     status_ = Box(root_, 0, 16, 128, 26, 0, LV_RADIUS_CIRCLE, 64);
-    const bool cell = device_.network.find("4G") != std::string::npos;
     const bool off = device_.network.empty() || device_.network == "无网络" ||
                      device_.network.find("未连接") != std::string::npos;
     auto* network = Box(status_, 0, 0, 20, 16, 0, 0, 0);
     lv_obj_align(network, LV_ALIGN_LEFT_MID, 11, 0);
     const lv_opa_t signal_opa = off ? 100 : LV_OPA_COVER;
-    if (cell) {
-        // Four compact, bottom-aligned signal columns match the reference
-        // glyph while keeping a clear gap between each rounded column.
-        constexpr int heights[] = {5, 8, 11, 14};
-        for (int i = 0; i < 4; ++i) {
-            const int height = heights[i];
-            Box(network, 1 + i * 5, 15 - height, 3, height,
-                0xffffff, LV_RADIUS_CIRCLE, signal_opa);
-        }
-    } else {
-        lv_obj_set_style_arc_color(network, lv_color_white(), 0);
-        lv_obj_set_style_arc_width(network, 2, 0);
-        lv_obj_set_style_arc_rounded(network, true, 0);
-        lv_obj_set_style_arc_opa(network, signal_opa, 0);
-        lv_obj_add_event_cb(network, DrawStatusWifi, LV_EVENT_DRAW_MAIN, nullptr);
-        Box(network, 8, 13, 3, 3, 0xffffff, LV_RADIUS_CIRCLE, signal_opa);
-    }
+    lv_obj_set_style_arc_color(network, lv_color_white(), 0);
+    lv_obj_set_style_arc_width(network, 2, 0);
+    lv_obj_set_style_arc_rounded(network, true, 0);
+    lv_obj_set_style_arc_opa(network, signal_opa, 0);
+    lv_obj_add_event_cb(network, DrawStatusWifi, LV_EVENT_DRAW_MAIN, nullptr);
+    Box(network, 8, 13, 3, 3, 0xffffff, LV_RADIUS_CIRCLE, signal_opa);
+
     if (off) {
         // This indicates connectivity, not RSSI. Keep the same compact marks
         // when offline, dimmed behind a clear disconnection slash.

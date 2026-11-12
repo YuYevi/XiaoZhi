@@ -265,7 +265,7 @@ extern "C" void __wrap_app_main() {
         gpio_set_level(Power_Control, 1);
     }
     if (!IsV5mPresent()) {
-        // A fresh ADC sample is needed before screen, modem and audio are powered.
+        // A fresh ADC sample is needed before the screen and audio are powered.
         // A fully power-gated chip cannot rely on an RTC shutdown marker alone.
         LatchPowerControlOn();
         BajiBatteryMonitor startup_battery;

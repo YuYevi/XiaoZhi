@@ -49,9 +49,6 @@ set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg"
 list(APPEND SOURCES
     "boards/common/board.cc"
     "boards/common/wifi_board.cc"
-    "boards/common/ml307_board.cc"
-    "boards/common/nt26_board.cc"
-    "boards/common/dual_network_board.cc"
     "boards/common/adc_battery_monitor.cc"
     "boards/common/axp2101.cc"
     "boards/common/backlight.cc"
@@ -64,6 +61,14 @@ list(APPEND SOURCES
     "boards/common/sy6970.cc"
     "boards/common/system_reset.cc"
 )
+# The BAJI Wi-Fi variant never uses cellular network board implementations.
+if(NOT CONFIG_BOARD_TYPE_BAJI_TOUCH_1_85LCD_WIFI)
+    list(APPEND SOURCES
+        "boards/common/ml307_board.cc"
+        "boards/common/nt26_board.cc"
+        "boards/common/dual_network_board.cc"
+    )
+endif()
 if(CONFIG_XIAOZHI_NETWORK_ETHERNET)
     list(APPEND SOURCES "boards/common/ethernet_board.cc")
 endif()
@@ -99,8 +104,8 @@ elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_ML307)
     set(BOARD_DIR "bread-compact-ml307")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_14_1)
     set(BUILTIN_ICON_FONT font_material_symbols_14_1)
-elseif(CONFIG_BOARD_TYPE_BAJI_TOUCH_1_85LCD_ML307)
-    set(BOARD_DIR "baji-touch-1.85lcd-ml307")
+elseif(CONFIG_BOARD_TYPE_BAJI_TOUCH_1_85LCD_WIFI)
+    set(BOARD_DIR "baji-touch-1.85lcd-wifi")
     include(${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/common/board.cmake)
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_NT26)
     set(BOARD_DIR "bread-compact-nt26")

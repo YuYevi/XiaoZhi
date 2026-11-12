@@ -6,7 +6,6 @@
 #include "application.h"
 #include "assets/lang_config.h"
 #include "settings.h"
-#include "dual_network_board.h"
 #include <wifi_manager.h>
 #include <esp_network.h>
 #include <esp_wifi.h>
@@ -37,8 +36,8 @@ bool PortalRequest(const char* path, const std::string* body, std::string& respo
     if (!manager.IsConfigMode()) { error = "配网服务尚未就绪，请重试"; return false; }
     if (manager.GetApWebUrl() != "http://192.168.4.1") { error = "配网服务地址不匹配"; return false; }
     const std::string url = std::string("http://192.168.4.1") + path;
-    // Explicitly select the native ESP/lwIP network, never the active board's
-    // modem transport. Credentials are sent only to this device's config AP.
+    // Explicitly select the native ESP/lwIP network. Credentials are sent only
+    // to this device's config AP.
     EspNetwork network;
     auto client = network.CreateHttp();
     if (!client) { error = "无法创建配网请求"; return false; }
@@ -392,7 +391,7 @@ void WatchRuntime::Action(WatchUi::Action action, int value) {
         case WatchUi::Action::StartChat:
             if (display_.IsWatchBooting()) break;
             if (!network_enabled_) {
-                display_.ShowNotification("请先开启 WLAN 或移动数据");
+                display_.ShowNotification("请先开启 WLAN");
             } else if (!services_.Snapshot().reminders.empty()) {
                 display_.ShowNotification("请先关闭提醒");
             } else if (app.GetDeviceState() == kDeviceStateIdle) {
@@ -585,11 +584,11 @@ void WatchRuntime::Tick() {
     // Report the saved brightness while asleep, rather than moving the slider to zero.
     Settings display_settings("display");
     device.brightness = std::clamp<int>(display_settings.GetInt("brightness", 75), 5, 100);
-    const bool cellular = static_cast<DualNetworkBoard&>(board_).GetNetworkType() == NetworkType::ML307;
-    device.network = network_enabled_ ? (cellular ? "4G" : "Wi-Fi") : "无网络";
+
+    device.network = network_enabled_ ? "Wi-Fi" : "无网络";
     if (network_enabled_ && !connected_) device.network += " 未连接";
     auto& wifi = WifiManager::GetInstance();
-    device.wifi_connected = network_enabled_ && !cellular && wifi.IsConnected();
+    device.wifi_connected = network_enabled_ && wifi.IsConnected();
     if (device.wifi_connected) device.wifi_ssid = wifi.GetSsid();
     device.chat_active = ChatState(app.GetDeviceState());
     device.firmware = esp_app_get_description()->version;
@@ -631,10 +630,6 @@ void WatchRuntime::RequestWifiScan() {
     if (!IsAwake() || sleep_requested_) return;
     last_activity_ = esp_timer_get_time();
     if (!network_enabled_) { display_.SetWatchWifiNetworks({}, false, "请先开启 WLAN"); return; }
-    if (static_cast<DualNetworkBoard&>(board_).GetNetworkType() != NetworkType::WIFI) {
-        display_.SetWatchWifiNetworks({}, false, "请先切换 Wi-Fi 模式");
-        return;
-    }
     auto& manager = WifiManager::GetInstance();
     if (!manager.IsInitialized()) { display_.SetWatchWifiNetworks({}, false, "Wi-Fi 正在初始化"); return; }
     if (wifi_worker_busy_.exchange(true)) return;
@@ -706,10 +701,6 @@ void WatchRuntime::RequestWifiConnect(std::string ssid, std::string password) {
         // The existing native provisioning implementation copies at most 31/63
         // bytes; reject longer credentials instead of silently truncating them.
         display_.SetWatchWifiConnectionState("failed", "名称最多31字节，密码最多63字节");
-        return;
-    }
-    if (static_cast<DualNetworkBoard&>(board_).GetNetworkType() != NetworkType::WIFI) {
-        display_.SetWatchWifiConnectionState("failed", "请先切换 Wi-Fi 模式");
         return;
     }
     if (wifi_worker_busy_.exchange(true)) {

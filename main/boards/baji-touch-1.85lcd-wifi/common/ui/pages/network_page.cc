@@ -78,7 +78,7 @@ void WatchUi::RenderNetwork() {
     CenteredIcon(tile, "wifi", 18, kBlue);
     Text(master, "WLAN", 52, 11, 122, 14, kText, 400, false, 22);
     Switch(master, on, 0x3b6ea8, [this, on] {
-        Confirm("WLAN", on ? "设备将重启并关闭网络。" : "设备将重启以切换网络。",
+        Confirm("WLAN", on ? "设备将重启并关闭 WLAN。" : "设备将重启并开启 WLAN。",
                 [this, on] { Emit(Action::SetNetwork, on ? -1 : 0); });
     });
 

@@ -21,28 +21,24 @@ void WatchUi::ToggleControl(bool show) {
     lv_obj_add_flag(control_, LV_OBJ_FLAG_CLICKABLE);
     Text(control_, "控制中心", 90, 47, 180, 16, kText, 400, true, 24);
     const bool wifi = device_.network.find("Wi-Fi") != std::string::npos;
-    const bool cell = device_.network.find("4G") != std::string::npos;
     struct Item { const char* icon; const char* label; bool active; uint32_t accent; };
     const Item items[] = {{"wifi", "WLAN", wifi, kBlue},
-                          {"signal", "移动数据", cell, kBlue},
                           {"volume-x", "静音", device_.volume == 0, kRose},
                           {"moon", "息屏", false, kPurple},
                           {"battery", "省电", power_save_, kGreen},
                           {"flashlight", "手电筒", torch_, 0xfcd34d}};
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 5; ++i) {
         const auto item = items[i];
-        auto* hit = Button(control_, 74 + (i % 3) * 74, 82 + (i / 3) * 74, 64, 68,
-                            kBg, 16, [this, i, wifi, cell] {
+        const int x = i < 3 ? 74 + i * 74 : 111 + (i - 3) * 74;
+        const int y = i < 3 ? 82 : 156;
+        auto* hit = Button(control_, x, y, 64, 68,
+                            kBg, 16, [this, i, wifi] {
             switch (i) {
                 case 0:
-                    Confirm("WLAN", wifi ? "设备将重启并关闭网络。" : "切换网络需要重新启动。",
+                    Confirm("WLAN", wifi ? "设备将重启并关闭 WLAN。" : "设备将重启并开启 WLAN。",
                             [this, wifi] { Emit(Action::SetNetwork, wifi ? -1 : 0); });
                     break;
                 case 1:
-                    Confirm("移动数据", cell ? "设备将重启并关闭网络。" : "切换网络需要重新启动。",
-                            [this, cell] { Emit(Action::SetNetwork, cell ? -1 : 1); });
-                    break;
-                case 2:
                     if (device_.volume) {
                         remembered_volume_ = device_.volume;
                         device_.volume = 0;
@@ -50,16 +46,16 @@ void WatchUi::ToggleControl(bool show) {
                     Emit(Action::SetVolume, device_.volume);
                     ToggleControl(true);
                     break;
-                case 3:
+                case 2:
                     ToggleControl(false);
                     Emit(Action::Sleep);
                     break;
-                case 4:
+                case 3:
                     power_save_ = !power_save_;
                     Emit(Action::SetPowerSave, power_save_);
                     ToggleControl(true);
                     break;
-                case 5:
+                case 4:
                     CloseModal();
                     ResetMenuInteraction();
                     torch_ = true;

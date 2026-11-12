@@ -1,4 +1,4 @@
-#include "dual_network_board.h"
+#include "wifi_board.h"
 #include "application.h"
 #include "config.h"
 #include "hardware/baji_audio_codec.h"
@@ -11,9 +11,7 @@
 
 #include <iot_button.h>
 #include <button_types.h>
-#include <at_uart.h>
 #include <algorithm>
-#include <atomic>
 
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
@@ -198,15 +196,15 @@ void baji_185_ensure_io_expander(void)
     ESP_ERROR_CHECK(esp_io_expander_new_i2c_tca9554(g_baji185_i2c_bus, TCA9554_I2C_ADDR, &g_baji185_io_expander));
 
     const uint32_t in_pins = BAJI185_IOX_PIN_MASK_VOL_DOWN | BAJI185_IOX_PIN_MASK_VOL_UP;
-    const uint32_t out_pins = BAJI185_IOX_PIN_MASK_4G_PWRON | BAJI185_IOX_PIN_MASK_4G_RST |
-                              BAJI185_IOX_PIN_MASK_PA | BAJI185_IOX_PIN_MASK_RUN_LED | BAJI185_IOX_PIN_MASK_LCD_RST;
+    const uint32_t out_pins = BAJI185_IOX_PIN_MASK_MODEM_PWRKEY | BAJI185_IOX_PIN_MASK_MODEM_RST |
+                              BAJI185_IOX_PIN_MASK_PA | BAJI185_IOX_PIN_MASK_RUN_LED |
+                              BAJI185_IOX_PIN_MASK_LCD_RST;
 
     // Program the output latch while the pins are still inputs. The generic
     // set_level API rejects input pins, so use the driver's public register
-    // callback. TCA9554 powers up with a high latch; preloading prevents a
-    // brief PA enable when the direction changes.
-    uint32_t safe_levels = (0xffu & ~out_pins) |
-                           BAJI185_IOX_PIN_MASK_4G_RST | BAJI185_IOX_PIN_MASK_LCD_RST;
+    // callback. TCA9554 powers up with a high latch; preload safe levels before
+    // changing direction so the modem PWRKEY stays inactive and reset stays asserted.
+    uint32_t safe_levels = (0xffu & ~out_pins) | BAJI185_IOX_PIN_MASK_LCD_RST;
 #ifdef AUDIO_CODEC_PA_INVERTED
     if (AUDIO_CODEC_PA_INVERTED) {
         safe_levels |= BAJI185_IOX_PIN_MASK_PA;
@@ -362,12 +360,11 @@ uint8_t VolumeDownLevel(button_driver_t*) {
 }
 }
 
-class BajiBoard : public DualNetworkBoard {
+class BajiBoard : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_ = nullptr;
     bool switching_ = false;
     bool network_offline_ = false;
-    std::atomic<int64_t> confirm_until_{0};
     BajiDisplay* display_ = nullptr;
     PowerManager* power_ = nullptr;
     WatchRuntime* watch_ = nullptr;
@@ -394,43 +391,6 @@ private:
     void SetExpander(uint32_t mask, bool high) {
         ESP_ERROR_CHECK(baji_185_set_io_level(mask, high));
     }
-    void PulseModemPower() {
-        SetExpander(BAJI185_IOX_PIN_MASK_4G_PWRON, true);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        SetExpander(BAJI185_IOX_PIN_MASK_4G_PWRON, false);
-    }
-    void InitializeModemPower() {
-        SetExpander(BAJI185_IOX_PIN_MASK_4G_RST, true);
-        // PWRKEY toggles the module. Check its state before pulsing after an ESP reset.
-        const bool enable = !network_offline_ && GetNetworkType() == NetworkType::ML307;
-        bool powered;
-        {
-            AtUart probe(UART_4G_TXD, UART_4G_RXD, UART0_DTR);
-            probe.Initialize();
-            ESP_ERROR_CHECK(probe.IsInitialized() ? ESP_OK : ESP_FAIL);
-            powered = probe.SetBaudRate(921600, 3000);
-            // Restore normal mode if a previous firmware left the module in flight mode.
-            if (powered && enable && !probe.SendCommand("AT+CFUN=1")) {
-                ESP_LOGW("BajiBoard", "Modem did not acknowledge normal mode");
-            }
-        } // Release the probe UART before the native Ml307Board starts its own task.
-        if (powered != enable) {
-            PulseModemPower();
-            vTaskDelay(pdMS_TO_TICKS(enable ? 1500 : 500));
-        }
-    }
-    void RequestNetworkSwitch() {
-        auto& app = Application::GetInstance();
-        const auto state = app.GetDeviceState();
-        if (switching_ || state == kDeviceStateActivating || state == kDeviceStateUpgrading ||
-            state == kDeviceStateNotifying || state == kDeviceStateAudioTesting || state == kDeviceStateFatalError || state == kDeviceStateUnknown) {
-            display_->ShowNotification("设备忙，请稍后切换网络");
-            return;
-        }
-        if (!SaveOfflineMode(false)) return;
-        switching_ = true;
-        SwitchNetworkType();
-    }
     bool SaveOfflineMode(bool offline) {
         nvs_handle_t handle = 0;
         esp_err_t result = nvs_open("watch", NVS_READWRITE, &handle);
@@ -442,7 +402,7 @@ private:
         if (result != ESP_OK) display_->ShowNotification("网络设置保存失败，请重试");
         return result == ESP_OK;
     }
-    void SelectWatchNetwork(int requested) {
+    void SelectWifiNetwork(int requested) {
         auto& app = Application::GetInstance();
         const auto state = app.GetDeviceState();
         if (switching_ || (state != kDeviceStateIdle && state != kDeviceStateStarting &&
@@ -451,9 +411,7 @@ private:
             return;
         }
         const bool offline = requested < 0;
-        if (!offline && ((requested == 1) != (GetNetworkType() == NetworkType::ML307))) {
-            RequestNetworkSwitch();
-        } else if (offline != network_offline_ && SaveOfflineMode(offline)) {
+        if (offline != network_offline_ && SaveOfflineMode(offline)) {
             switching_ = true;
             app.Reboot();
         }
@@ -475,19 +433,15 @@ private:
         button_drivers_[1].get_key_level = VolumeUpLevel;
         button_drivers_[2].get_key_level = VolumeDownLevel;
         for (int i = 0; i < 3; ++i) {
-            const button_config_t config = { .long_press_time = static_cast<uint16_t>(i == 1 ? 3000 : 2000), .short_press_time = 0 };
+            const button_config_t config = { .long_press_time = 2000, .short_press_time = 0 };
             ESP_ERROR_CHECK(iot_button_create(&config, &button_drivers_[i], &buttons_[i]));
         }
         ESP_ERROR_CHECK(iot_button_register_cb(buttons_[0], BUTTON_SINGLE_CLICK, nullptr, [](void*, void* context) {
             auto* self = static_cast<BajiBoard*>(context);
             Application::GetInstance().Schedule([self]() {
                 if (self->switching_ || !self->watch_->IsAwake()) return;
-                if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting && self->GetNetworkType() == NetworkType::WIFI) {
-                    static_cast<WifiBoard&>(self->GetCurrentBoard()).EnterWifiConfigMode();
-                } else if (self->GetNetworkType() == NetworkType::ML307 &&
-                           (Application::GetInstance().GetDeviceState() == kDeviceStateStarting ||
-                            Application::GetInstance().GetDeviceState() == kDeviceStateWifiConfiguring)) {
-                    self->display_->ShowNotification("正在连接4G，请稍候");
+                if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting && !self->network_offline_) {
+                    self->EnterWifiConfigMode();
                 } else {
                     self->watch_->Back();
                 }
@@ -501,17 +455,7 @@ private:
             auto* self = static_cast<BajiBoard*>(context);
             Application::GetInstance().Schedule([self]() {
                 if (!self->watch_->IsAwake()) return;
-                const int64_t deadline = self->confirm_until_.exchange(0);
-                if (deadline > esp_timer_get_time()) self->RequestNetworkSwitch();
-                else self->ChangeVolume(10);
-            });
-        }, this));
-        ESP_ERROR_CHECK(iot_button_register_cb(buttons_[1], BUTTON_LONG_PRESS_START, nullptr, [](void*, void* context) {
-            auto* self = static_cast<BajiBoard*>(context);
-            Application::GetInstance().Schedule([self]() {
-                if (!self->watch_->IsAwake()) return;
-                self->confirm_until_ = esp_timer_get_time() + 5000000;
-                self->display_->ShowNotification(self->GetNetworkType() == NetworkType::WIFI ? "切换4G？短按音量+确认" : "切换WiFi？短按音量+确认", 2000);
+                self->ChangeVolume(10);
             });
         }, this));
         ESP_ERROR_CHECK(iot_button_register_cb(buttons_[2], BUTTON_SINGLE_CLICK, nullptr, [](void*, void* context) {
@@ -540,16 +484,15 @@ private:
             });
         });
         watch_->SetNetworkActions([this](int requested) {
-            SelectWatchNetwork(requested);
+            SelectWifiNetwork(requested);
         }, [this]() {
             if (network_offline_) { display_->ShowNotification("请先开启 WLAN"); return; }
             const auto state = Application::GetInstance().GetDeviceState();
-            if (GetNetworkType() == NetworkType::WIFI &&
-                (state == kDeviceStateIdle || state == kDeviceStateStarting))
-                static_cast<WifiBoard&>(GetCurrentBoard()).EnterWifiConfigMode();
-            else if (GetNetworkType() == NetworkType::WIFI && state == kDeviceStateWifiConfiguring)
+            if (state == kDeviceStateIdle || state == kDeviceStateStarting)
+                EnterWifiConfigMode();
+            else if (state == kDeviceStateWifiConfiguring)
                 return;
-            else display_->ShowNotification("请先切换 Wi-Fi，并结束当前对话");
+            else display_->ShowNotification("请先结束当前对话");
         });
         power_->OnLowBatteryStatusChanged([this](bool low) {
             if (!low) return;
@@ -560,7 +503,7 @@ private:
     }
 
 public:
-    BajiBoard() : DualNetworkBoard(UART_4G_TXD, UART_4G_RXD, UART0_DTR, 0) {
+    BajiBoard() {
         network_offline_ = Settings("watch").GetBool("net_off", false);
         // Complete BAJI's power-on gate before initializing screen and audio.
         power_ = new PowerManager(POWER_USB_IN);
@@ -609,25 +552,24 @@ public:
         // Application calls this after board and display initialization completes.
         power_->Start();
         watch_->Start();
-        InitializeModemPower();
         if (network_offline_) {
-            // Keep the original network objects untouched. A restart owns their
-            // lifecycle, so disabling either radio never races a native task.
+            // Keep the native Wi-Fi objects untouched. A restart owns their
+            // lifecycle, so disabling Wi-Fi never races a native task.
             // The native state machine requires Starting -> Activating -> Idle.
             // No network event is emitted, so no server activation job starts.
             Application::GetInstance().SetDeviceState(kDeviceStateActivating);
             Application::GetInstance().SetDeviceState(kDeviceStateIdle);
             ESP_LOGI("BajiBoard", "Networks disabled; local watch remains available");
         } else {
-            DualNetworkBoard::StartNetwork();
+            WifiBoard::StartNetwork();
         }
     }
     void SetPowerSaveLevel(PowerSaveLevel level) override {
         if (watch_ && level != PowerSaveLevel::LOW_POWER) watch_->OnPerformanceRequested();
-        DualNetworkBoard::SetPowerSaveLevel(level);
+        WifiBoard::SetPowerSaveLevel(level);
     }
     void SetNetworkEventCallback(NetworkEventCallback callback) override {
-        DualNetworkBoard::SetNetworkEventCallback([this, callback](NetworkEvent event, const std::string& data) {
+        WifiBoard::SetNetworkEventCallback([this, callback](NetworkEvent event, const std::string& data) {
             if (watch_) watch_->OnNetworkEvent(event);
             if (callback) callback(event, data);
         });

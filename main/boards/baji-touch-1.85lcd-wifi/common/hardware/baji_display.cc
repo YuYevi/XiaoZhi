@@ -216,8 +216,8 @@ void BajiDisplay::ShowNotification(const char* notification, int duration_ms) {
 
 void BajiDisplay::UpdateStatusBar(bool update_all) {
     DisplayLockGuard lock(this);
-    // The board supplies a cached DeviceSnapshot to TickWatch. In particular,
-    // do not query the cellular modem again from the native display clock tick.
+    // The board supplies a cached DeviceSnapshot to TickWatch; keep network
+    // state reads out of the native display clock tick.
     // Charging-only startup also reaches this method without Board/Application.
     (void)update_all;
 }
