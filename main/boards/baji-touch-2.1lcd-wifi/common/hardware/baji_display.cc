@@ -308,7 +308,7 @@ extern "C" esp_err_t __wrap_lvgl_port_init(const lvgl_port_cfg_t* cfg) {
     watch_cfg.task_stack = std::max(watch_cfg.task_stack, 16 * 1024);
     // Resume promptly at TE/DMA completion; audio processing keeps its higher priority.
     watch_cfg.task_priority = std::max(watch_cfg.task_priority, 4);
-    ESP_LOGI("BajiDisplay", "Watch LVGL task stack: %d bytes", watch_cfg.task_stack);
+    // ESP_LOGI("BajiDisplay", "Watch LVGL task stack: %d bytes", watch_cfg.task_stack);
     return __real_lvgl_port_init(&watch_cfg);
 }
 
@@ -371,9 +371,9 @@ void BajiDisplay::InitializeTouch(i2c_master_bus_handle_t i2c_bus) {
     lv_indev_add_event_cb(touch_indev_, [](lv_event_t* event) {
         static_cast<BajiDisplay*>(lv_event_get_user_data(event))->OnTouchPressed();
     }, LV_EVENT_PRESSED, this);
-    ESP_LOGI("BajiDisplay", "CST836U touch registered: I2C 0x%02X, 400kHz, INT GPIO%d, sampler=%ums",
-             TOUCH_I2C_ADDRESS, TOUCH_INT_GPIO,
-             static_cast<unsigned>(kTouchSamplePeriodMs));
+    // ESP_LOGI("BajiDisplay", "CST836U touch registered: I2C 0x%02X, 400kHz, INT GPIO%d, sampler=%ums",
+    //          TOUCH_I2C_ADDRESS, TOUCH_INT_GPIO,
+    //          static_cast<unsigned>(kTouchSamplePeriodMs));
 }
 
 void BajiDisplay::SetupUI() {
@@ -426,8 +426,9 @@ void BajiDisplay::LoadPackagedTextFont() {
         auto font = cJSON_GetObjectItem(index, "text_font");
         if (cJSON_IsString(font) && assets.GetAssetData(font->valuestring, asset_data, asset_size)) {
             auto text_font = std::make_shared<LvglCBinFont>(asset_data);
-            if (text_font->font() && SetTextFont(text_font))
-                ESP_LOGI("BajiDisplay", "Loaded native font for offline watch UI");
+            if (text_font->font() && SetTextFont(text_font)) {
+                // ESP_LOGI("BajiDisplay", "Loaded native font for offline watch UI");
+            }
         }
         cJSON_Delete(index);
     }

@@ -83,8 +83,8 @@ BajiAudioCodec::BajiAudioCodec(void* i2c_master_handle, i2c_port_t i2c_port,
     es8311_cfg.hw_gain.codec_dac_voltage = 3.3;
     codec_if_ = es8311_codec_new(&es8311_cfg);
     assert(codec_if_ != nullptr);
-    ESP_LOGI(kTag, "ES8311 initialized, microphone input: %s",
-        AUDIO_INPUT_USE_SILICON_MIC ? "external digital" : "ES8311 ADC");
+    // ESP_LOGI(kTag, "ES8311 initialized, microphone input: %s",
+    //     AUDIO_INPUT_USE_SILICON_MIC ? "external digital" : "ES8311 ADC");
 }
 
 BajiAudioCodec::~BajiAudioCodec() {
@@ -255,7 +255,7 @@ void BajiAudioCodec::StartAmplifier() {
     pa_enabled_ = true;
     last_output_us_ = esp_timer_get_time();
     pa_ready_at_us_ = last_output_us_ + int64_t(kPaWakeMs) * 1000;
-    ESP_LOGI(kTag, "Amplifier enabled for playback");
+    // ESP_LOGI(kTag, "Amplifier enabled for playback");
 }
 
 void BajiAudioCodec::PollOutputPower() {
@@ -266,7 +266,7 @@ void BajiAudioCodec::PollOutputPower() {
     if (esp_timer_get_time() - last_output_us_ < kPaIdleUs) return;
     set_pa_enabled_(false);
     pa_enabled_ = false;
-    ESP_LOGI(kTag, "Amplifier idle; duplex clocks retained");
+    // ESP_LOGI(kTag, "Amplifier idle; duplex clocks retained");
 }
 
 void BajiAudioCodec::PrepareForShutdown() {

@@ -302,7 +302,7 @@ bool WatchServices::Initialize(std::string* error) {
         impl_->storage_error = std::string("读取提醒失败: ") + esp_err_to_name(result);
         return Fail(error, impl_->storage_error);
     }
-    ESP_LOGI(kTag, "Loaded %u alarms and %u events", unsigned(impl_->state.alarms.size()), unsigned(impl_->state.events.size()));
+    // ESP_LOGI(kTag, "Loaded %u alarms and %u events", unsigned(impl_->state.alarms.size()), unsigned(impl_->state.events.size()));
     return true;
 }
 

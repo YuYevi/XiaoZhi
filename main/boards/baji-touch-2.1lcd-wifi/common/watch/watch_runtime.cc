@@ -197,7 +197,7 @@ void WatchRuntime::Start() {
     };
     ESP_ERROR_CHECK(esp_timer_create(&args, &timer_));
     ESP_ERROR_CHECK(esp_timer_start_periodic(timer_, 250000));
-    ESP_LOGI(kTag, "Started: power-button wake, automatic screen off, local reminders");
+    // ESP_LOGI(kTag, "Started: power-button wake, automatic screen off, local reminders");
 }
 
 void WatchRuntime::Wake() {

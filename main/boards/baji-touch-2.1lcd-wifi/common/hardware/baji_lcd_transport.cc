@@ -251,15 +251,15 @@ void Flush(lv_display_t* display, const lv_area_t*, uint8_t* canvas) {
     transport.last_period_us = period;
     const uint32_t now = Micros();
     if (transport.frames <= 3 || now - transport.report_at_us >= 5000000) {
-        ESP_LOGI(kTag, "frames=%lu TE=%luus high=%luus tx=%luus max=%luus phase_max=%luus prepare_max=%luus render=%luus render_max=%luus first_strip_max=%luus scan_margin_min=%ldus scan_miss=%lu timeout=%lu late=%lu overrun=%lu",
-                 static_cast<unsigned long>(transport.frames), static_cast<unsigned long>(period),
-                 static_cast<unsigned long>(high), static_cast<unsigned long>(transfer_us),
-                 static_cast<unsigned long>(transport.max_transfer_us), static_cast<unsigned long>(transport.max_phase_us),
-                 static_cast<unsigned long>(transport.max_prepare_us), static_cast<unsigned long>(render_us),
-                 static_cast<unsigned long>(transport.max_render_us), static_cast<unsigned long>(transport.max_first_strip_us),
-                 static_cast<long>(transport.min_scan_margin_us), static_cast<unsigned long>(transport.scan_deadline_misses),
-                 static_cast<unsigned long>(transport.timeouts),
-                 static_cast<unsigned long>(transport.late_edges), static_cast<unsigned long>(transport.overruns));
+        // ESP_LOGI(kTag, "frames=%lu TE=%luus high=%luus tx=%luus max=%luus phase_max=%luus prepare_max=%luus render=%luus render_max=%luus first_strip_max=%luus scan_margin_min=%ldus scan_miss=%lu timeout=%lu late=%lu overrun=%lu",
+        //          static_cast<unsigned long>(transport.frames), static_cast<unsigned long>(period),
+        //          static_cast<unsigned long>(high), static_cast<unsigned long>(transfer_us),
+        //          static_cast<unsigned long>(transport.max_transfer_us), static_cast<unsigned long>(transport.max_phase_us),
+        //          static_cast<unsigned long>(transport.max_prepare_us), static_cast<unsigned long>(render_us),
+        //          static_cast<unsigned long>(transport.max_render_us), static_cast<unsigned long>(transport.max_first_strip_us),
+        //          static_cast<long>(transport.min_scan_margin_us), static_cast<unsigned long>(transport.scan_deadline_misses),
+        //          static_cast<unsigned long>(transport.timeouts),
+        //          static_cast<unsigned long>(transport.late_edges), static_cast<unsigned long>(transport.overruns));
         transport.report_at_us = now;
     }
     lv_display_flush_ready(display);
@@ -355,8 +355,8 @@ extern "C" lv_display_t* __wrap_lvgl_port_add_disp(const lvgl_port_display_cfg_t
     lv_display_add_event_cb(display, [](lv_event_t*) { transport.render_started_us = Micros(); },
                             LV_EVENT_RENDER_START, nullptr);
     lv_display_add_event_cb(display, DisplayDeleted, LV_EVENT_DELETE, nullptr);
-    ESP_LOGI(kTag, "GPIO%d fresh TE + half-period phase; composed 360x360 frame, 2x%u-line internal DMA, native scan order",
-             QSPI_PIN_NUM_LCD_TE, static_cast<unsigned>(kLines));
+    // ESP_LOGI(kTag, "GPIO%d fresh TE + half-period phase; composed 360x360 frame, 2x%u-line internal DMA, native scan order",
+    //          QSPI_PIN_NUM_LCD_TE, static_cast<unsigned>(kLines));
     lvgl_port_unlock();
     return display;
 }

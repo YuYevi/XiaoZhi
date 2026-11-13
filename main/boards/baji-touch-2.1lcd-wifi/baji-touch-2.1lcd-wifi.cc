@@ -296,20 +296,17 @@ BajiDisplay* baji_21_create_lcd_display(bool quiet_boot)
     if (!quiet_boot) {
         printf("-------------------------------------- Version selection -------------------------------------- \r\n");
     }
-    esp_err_t ret;
     int lcd_cmd = 0x04;
     uint8_t register_data[3] = {};
     size_t param_size = sizeof(register_data);
     lcd_cmd &= 0xff;
     lcd_cmd <<= 8;
     lcd_cmd |= LCD_OPCODE_READ_CMD << 24;
-    ret = esp_lcd_panel_io_rx_param(panel_io, lcd_cmd, register_data, param_size);
+    // The register data selects the panel initialization sequence. The return
+    // value was only used by the disabled diagnostic print below.
+    static_cast<void>(esp_lcd_panel_io_rx_param(panel_io, lcd_cmd, register_data, param_size));
     if (!quiet_boot) {
-        if (ret == ESP_OK) {
-            printf("Register 0x04 data: %02x %02x %02x\n", register_data[0], register_data[1], register_data[2]);
-        } else {
-            printf("Failed to read register 0x04, error code: %d\n", ret);
-        }
+        printf("Register 0x04 data: %02x %02x %02x\n", register_data[0], register_data[1], register_data[2]);
     }
 
     if (register_data[0] == 0x00 && register_data[1] == 0x7F && register_data[2] == 0x7F) {

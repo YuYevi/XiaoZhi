@@ -91,7 +91,7 @@ BajiBatteryMonitor::BajiBatteryMonitor() {
     if (calibrated != ESP_OK) {
         ESP_LOGE(kTag, "ADC calibration unavailable: %s; no raw-to-percent fallback", esp_err_to_name(calibrated));
     } else {
-        ESP_LOGI(kTag, "Calibrated ADC GPIO4, R8/R13=200k/200k, charge STAT GPIO16");
+        // ESP_LOGI(kTag, "Calibrated ADC GPIO4, R8/R13=200k/200k, charge STAT GPIO16");
     }
     RestoreState();
 }
@@ -250,7 +250,7 @@ void BajiBatteryMonitor::Poll() {
     const bool charging = usb && stat_active;
     const bool cable_changed = usb != usb_;
     if (usb != usb_ || charging != charging_) {
-        ESP_LOGI(kTag, "Power changed: usb=%d active_charge=%d; preserving SOC", usb, charging);
+        // ESP_LOGI(kTag, "Power changed: usb=%d active_charge=%d; preserving SOC", usb, charging);
     }
     usb_ = usb;
     charging_ = charging;
@@ -298,14 +298,14 @@ void BajiBatteryMonitor::Poll() {
     const bool display_floor_changed = estimator_.DisplayFloorActive() != last_display_floor_active_;
     if (display_floor_changed) {
         last_display_floor_active_ = estimator_.DisplayFloorActive();
-        ESP_LOGI(kTag, "Insertion display hold=%d reference=%dmV SOC=%.3f%% target=%.3f%%",
-            last_display_floor_active_, estimator_.DisplayFloorReferenceMillivolts(),
-            estimator_.PrecisePercent(), estimator_.TargetPercent());
+        // ESP_LOGI(kTag, "Insertion display hold=%d reference=%dmV SOC=%.3f%% target=%.3f%%",
+        //     last_display_floor_active_, estimator_.DisplayFloorReferenceMillivolts(),
+        //     estimator_.PrecisePercent(), estimator_.TargetPercent());
     }
     if (full_changed) {
         last_full_ = estimator_.Full();
-        ESP_LOGI(kTag, "Charge cycle: full=%d inferred=%d supply_low=%d VBAT=%dmV",
-            last_full_, estimator_.FullInferred(), estimator_.SupplyLow(), estimator_.Millivolts());
+        // ESP_LOGI(kTag, "Charge cycle: full=%d inferred=%d supply_low=%d VBAT=%dmV",
+        //     last_full_, estimator_.FullInferred(), estimator_.SupplyLow(), estimator_.Millivolts());
         if (estimator_.SupplyLow()) {
             ESP_LOGW(kTag, "Voltage below recharge range despite USB; verify input supply and charger");
         }
@@ -313,11 +313,6 @@ void BajiBatteryMonitor::Poll() {
     if (now - log_at_ms_ >= 60000) {
         log_at_ms_ = now;
         if (!usb_ && !cable_changed) RecordTrace(now, false);
-        const auto state = GetSnapshot();
-        ESP_LOGI(kTag, "VBAT=%dmV correction=%dmV target=%.3f%% SOC=%.3f%% valid=%d USB=%d active_charge=%d full=%d supply_low=%d gpio_usb=%d gpio_stat=%d anchor_soc=%.3f%% anchor_curve=%.3f%% display_hold=%d hold_reference=%dmV",
-            state.millivolts, state.correction_mv, state.model_percent, state.precise_level, state.valid,
-            state.usb, state.charging, state.full, state.supply_low, usb_gpio, stat_gpio,
-            state.anchor_soc, state.anchor_curve, state.display_floor_active, state.display_floor_reference_mv);
     }
     // NVS writes run in the battery task, never in the shared ESP timer task.
     const bool checkpoint_due = checkpoint_at_ms_ >= 0 && now >= checkpoint_at_ms_;
