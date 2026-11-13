@@ -166,7 +166,7 @@ extern "C" void board_charging_only_main(void)
     battery.Poll();
 
     BajiBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
-    BajiDisplay* display = baji_185_create_lcd_display(true);
+    BajiDisplay* display = baji_21_create_lcd_display(true);
     if (display == nullptr) {
 
         ChargingOnlyPowerOffDeepSleep();

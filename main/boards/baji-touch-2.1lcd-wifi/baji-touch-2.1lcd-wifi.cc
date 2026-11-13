@@ -139,16 +139,16 @@ static const st77916_lcd_init_cmd_t vendor_specific_init_new[] = {
 };
 
 static bool s_baji_spi_bus_inited = false;
-static i2c_master_bus_handle_t g_baji185_i2c_bus = nullptr;
-static esp_io_expander_handle_t g_baji185_io_expander = nullptr;
+static i2c_master_bus_handle_t g_baji21_i2c_bus = nullptr;
+static esp_io_expander_handle_t g_baji21_io_expander = nullptr;
 
-#if BAJI185_RUN_LED_AUTO_BLINK
-static esp_timer_handle_t g_baji185_run_led_timer = nullptr;
+#if BAJI21_RUN_LED_AUTO_BLINK
+static esp_timer_handle_t g_baji21_run_led_timer = nullptr;
 #endif
 
-i2c_master_bus_handle_t baji_185_get_i2c_bus(void)
+i2c_master_bus_handle_t baji_21_get_i2c_bus(void)
 {
-    if (g_baji185_i2c_bus == nullptr) {
+    if (g_baji21_i2c_bus == nullptr) {
         i2c_master_bus_config_t i2c_bus_cfg = {
             .i2c_port = (i2c_port_t)I2C_NUM_0,
             .sda_io_num = AUDIO_CODEC_I2C_SDA_PIN,
@@ -161,76 +161,76 @@ i2c_master_bus_handle_t baji_185_get_i2c_bus(void)
                 .enable_internal_pullup = 1,
             },
         };
-        ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &g_baji185_i2c_bus));
+        ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &g_baji21_i2c_bus));
     }
-    return g_baji185_i2c_bus;
+    return g_baji21_i2c_bus;
 }
 
-esp_io_expander_handle_t baji_185_get_io_expander(void)
+esp_io_expander_handle_t baji_21_get_io_expander(void)
 {
-    return g_baji185_io_expander;
+    return g_baji21_io_expander;
 }
 
-esp_err_t baji_185_set_io_level(uint32_t mask, bool high) {
+esp_err_t baji_21_set_io_level(uint32_t mask, bool high) {
     static std::mutex output_mutex;
     std::lock_guard<std::mutex> lock(output_mutex);
-    return esp_io_expander_set_level(g_baji185_io_expander, mask, high ? 1 : 0);
+    return esp_io_expander_set_level(g_baji21_io_expander, mask, high ? 1 : 0);
 }
 
-#if BAJI185_RUN_LED_AUTO_BLINK
-static void baji185_run_led_timer_cb(void* arg)
+#if BAJI21_RUN_LED_AUTO_BLINK
+static void baji21_run_led_timer_cb(void* arg)
 {
     (void)arg;
     static bool on;
     on = !on;
-    baji_185_set_io_level(BAJI185_IOX_PIN_MASK_RUN_LED, on);
+    baji_21_set_io_level(BAJI21_IOX_PIN_MASK_RUN_LED, on);
 }
 #endif
 
-void baji_185_ensure_io_expander(void)
+void baji_21_ensure_io_expander(void)
 {
-    if (g_baji185_io_expander != nullptr) {
+    if (g_baji21_io_expander != nullptr) {
         return;
     }
-    baji_185_get_i2c_bus();
-    ESP_ERROR_CHECK(esp_io_expander_new_i2c_tca9554(g_baji185_i2c_bus, TCA9554_I2C_ADDR, &g_baji185_io_expander));
+    baji_21_get_i2c_bus();
+    ESP_ERROR_CHECK(esp_io_expander_new_i2c_tca9554(g_baji21_i2c_bus, TCA9554_I2C_ADDR, &g_baji21_io_expander));
 
-    const uint32_t in_pins = BAJI185_IOX_PIN_MASK_VOL_DOWN | BAJI185_IOX_PIN_MASK_VOL_UP;
-    const uint32_t out_pins = BAJI185_IOX_PIN_MASK_MODEM_PWRKEY | BAJI185_IOX_PIN_MASK_MODEM_RST |
-                              BAJI185_IOX_PIN_MASK_PA | BAJI185_IOX_PIN_MASK_RUN_LED |
-                              BAJI185_IOX_PIN_MASK_LCD_RST;
+    const uint32_t in_pins = BAJI21_IOX_PIN_MASK_VOL_DOWN | BAJI21_IOX_PIN_MASK_VOL_UP;
+    const uint32_t out_pins = BAJI21_IOX_PIN_MASK_MODEM_PWRKEY | BAJI21_IOX_PIN_MASK_MODEM_RST |
+                              BAJI21_IOX_PIN_MASK_PA | BAJI21_IOX_PIN_MASK_RUN_LED |
+                              BAJI21_IOX_PIN_MASK_LCD_RST;
 
     // Program the output latch while the pins are still inputs. The generic
     // set_level API rejects input pins, so use the driver's public register
     // callback. TCA9554 powers up with a high latch; preload safe levels before
     // changing direction so the modem PWRKEY stays inactive and reset stays asserted.
-    uint32_t safe_levels = (0xffu & ~out_pins) | BAJI185_IOX_PIN_MASK_LCD_RST;
+    uint32_t safe_levels = (0xffu & ~out_pins) | BAJI21_IOX_PIN_MASK_LCD_RST;
 #ifdef AUDIO_CODEC_PA_INVERTED
     if (AUDIO_CODEC_PA_INVERTED) {
-        safe_levels |= BAJI185_IOX_PIN_MASK_PA;
+        safe_levels |= BAJI21_IOX_PIN_MASK_PA;
     }
 #endif
-    ESP_ERROR_CHECK(g_baji185_io_expander->write_output_reg(g_baji185_io_expander, safe_levels));
+    ESP_ERROR_CHECK(g_baji21_io_expander->write_output_reg(g_baji21_io_expander, safe_levels));
 
-    ESP_ERROR_CHECK(esp_io_expander_set_dir(g_baji185_io_expander, in_pins, IO_EXPANDER_INPUT));
+    ESP_ERROR_CHECK(esp_io_expander_set_dir(g_baji21_io_expander, in_pins, IO_EXPANDER_INPUT));
 
-    ESP_ERROR_CHECK(esp_io_expander_set_dir(g_baji185_io_expander, out_pins, IO_EXPANDER_OUTPUT));
+    ESP_ERROR_CHECK(esp_io_expander_set_dir(g_baji21_io_expander, out_pins, IO_EXPANDER_OUTPUT));
 
-#if BAJI185_RUN_LED_AUTO_BLINK
-    if (g_baji185_run_led_timer == nullptr) {
+#if BAJI21_RUN_LED_AUTO_BLINK
+    if (g_baji21_run_led_timer == nullptr) {
         const esp_timer_create_args_t targs = {
-            .callback = baji185_run_led_timer_cb,
+            .callback = baji21_run_led_timer_cb,
             .arg = nullptr,
             .dispatch_method = ESP_TIMER_TASK,
-            .name = "baji185_run_led",
+            .name = "baji21_run_led",
         };
-        ESP_ERROR_CHECK(esp_timer_create(&targs, &g_baji185_run_led_timer));
-        ESP_ERROR_CHECK(esp_timer_start_periodic(g_baji185_run_led_timer, 500000));
+        ESP_ERROR_CHECK(esp_timer_create(&targs, &g_baji21_run_led_timer));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(g_baji21_run_led_timer, 500000));
     }
 #endif
 }
 
-void baji_185_initialize_spi(void)
+void baji_21_initialize_spi(void)
 {
     if (s_baji_spi_bus_inited) {
         return;
@@ -248,19 +248,19 @@ void baji_185_initialize_spi(void)
 
 static void ResetLcd(void)
 {
-    baji_185_ensure_io_expander();
-    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji185_io_expander, BAJI185_IOX_PIN_MASK_LCD_RST, 0));
+    baji_21_ensure_io_expander();
+    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji21_io_expander, BAJI21_IOX_PIN_MASK_LCD_RST, 0));
     vTaskDelay(pdMS_TO_TICKS(10));
-    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji185_io_expander, BAJI185_IOX_PIN_MASK_LCD_RST, 1));
+    ESP_ERROR_CHECK(esp_io_expander_set_level(g_baji21_io_expander, BAJI21_IOX_PIN_MASK_LCD_RST, 1));
     vTaskDelay(pdMS_TO_TICKS(120));
 }
 
 }  // namespace
 
-BajiDisplay* baji_185_create_lcd_display(bool quiet_boot)
+BajiDisplay* baji_21_create_lcd_display(bool quiet_boot)
 {
-    baji_185_ensure_io_expander();
-    baji_185_initialize_spi();
+    baji_21_ensure_io_expander();
+    baji_21_initialize_spi();
     ResetLcd();
 
     esp_lcd_panel_io_handle_t panel_io = nullptr;
@@ -349,14 +349,14 @@ BajiDisplay* baji_185_create_lcd_display(bool quiet_boot)
 
 namespace {
 uint8_t VolumeUpLevel(button_driver_t*) {
-    uint32_t level = BAJI185_IOX_PIN_MASK_VOL_UP;
-    if (esp_io_expander_get_level(baji_185_get_io_expander(), BAJI185_IOX_PIN_MASK_VOL_UP, &level) != ESP_OK) return 0;
-    return (level & BAJI185_IOX_PIN_MASK_VOL_UP) == 0;
+    uint32_t level = BAJI21_IOX_PIN_MASK_VOL_UP;
+    if (esp_io_expander_get_level(baji_21_get_io_expander(), BAJI21_IOX_PIN_MASK_VOL_UP, &level) != ESP_OK) return 0;
+    return (level & BAJI21_IOX_PIN_MASK_VOL_UP) == 0;
 }
 uint8_t VolumeDownLevel(button_driver_t*) {
-    uint32_t level = BAJI185_IOX_PIN_MASK_VOL_DOWN;
-    if (esp_io_expander_get_level(baji_185_get_io_expander(), BAJI185_IOX_PIN_MASK_VOL_DOWN, &level) != ESP_OK) return 0;
-    return (level & BAJI185_IOX_PIN_MASK_VOL_DOWN) == 0;
+    uint32_t level = BAJI21_IOX_PIN_MASK_VOL_DOWN;
+    if (esp_io_expander_get_level(baji_21_get_io_expander(), BAJI21_IOX_PIN_MASK_VOL_DOWN, &level) != ESP_OK) return 0;
+    return (level & BAJI21_IOX_PIN_MASK_VOL_DOWN) == 0;
 }
 }
 
@@ -372,24 +372,24 @@ private:
     button_handle_t buttons_[3] = {};
 
     void InitializeI2c() {
-        i2c_bus_ = baji_185_get_i2c_bus();
+        i2c_bus_ = baji_21_get_i2c_bus();
     }
 
     void InitializeTca9554() {
-        baji_185_ensure_io_expander();
+        baji_21_ensure_io_expander();
     }
 
     void InitializeSpi() {
-        baji_185_initialize_spi();
+        baji_21_initialize_spi();
     }
 
     void InitializeSt77916Display() {
-        display_ = baji_185_create_lcd_display();
+        display_ = baji_21_create_lcd_display();
         ESP_ERROR_CHECK(display_ ? ESP_OK : ESP_FAIL);
     }
 
     void SetExpander(uint32_t mask, bool high) {
-        ESP_ERROR_CHECK(baji_185_set_io_level(mask, high));
+        ESP_ERROR_CHECK(baji_21_set_io_level(mask, high));
     }
     bool SaveOfflineMode(bool offline) {
         nvs_handle_t handle = 0;
@@ -529,7 +529,7 @@ public:
 #else
             AUDIO_I2S_GPIO_DIN,
 #endif
-            [this](bool enabled) { SetExpander(BAJI185_IOX_PIN_MASK_PA, enabled != static_cast<bool>(AUDIO_CODEC_PA_INVERTED)); },
+            [this](bool enabled) { SetExpander(BAJI21_IOX_PIN_MASK_PA, enabled != static_cast<bool>(AUDIO_CODEC_PA_INVERTED)); },
             AUDIO_CODEC_ES8311_ADDR);
         g_baji_shutdown_codec = &codec;
         return &codec;

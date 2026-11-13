@@ -67,4 +67,4 @@ private:
 };
 
 // Shared hardware setup for normal startup and the charging-only entry.
-BajiDisplay* baji_185_create_lcd_display(bool quiet_boot = false);
+BajiDisplay* baji_21_create_lcd_display(bool quiet_boot = false);

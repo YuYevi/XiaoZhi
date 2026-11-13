@@ -62,7 +62,7 @@ list(APPEND SOURCES
     "boards/common/system_reset.cc"
 )
 # The BAJI Wi-Fi variant never uses cellular network board implementations.
-if(NOT CONFIG_BOARD_TYPE_BAJI_TOUCH_1_85LCD_WIFI)
+if(NOT CONFIG_BOARD_TYPE_BAJI_TOUCH_2_1LCD_WIFI)
     list(APPEND SOURCES
         "boards/common/ml307_board.cc"
         "boards/common/nt26_board.cc"
@@ -104,8 +104,8 @@ elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_ML307)
     set(BOARD_DIR "bread-compact-ml307")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_14_1)
     set(BUILTIN_ICON_FONT font_material_symbols_14_1)
-elseif(CONFIG_BOARD_TYPE_BAJI_TOUCH_1_85LCD_WIFI)
-    set(BOARD_DIR "baji-touch-1.85lcd-wifi")
+elseif(CONFIG_BOARD_TYPE_BAJI_TOUCH_2_1LCD_WIFI)
+    set(BOARD_DIR "baji-touch-2.1lcd-wifi")
     include(${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/common/board.cmake)
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_NT26)
     set(BOARD_DIR "bread-compact-nt26")

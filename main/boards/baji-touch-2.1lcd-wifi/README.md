@@ -1,6 +1,6 @@
-# BAJI Touch 1.85 智能手表
+# BAJI Touch 2.1 智能手表
 
-ESP32-S3 / 360 × 360 ST77916 / ES8311 / CST836U。板级硬件移植自 `C:\Zero\BAJI工具\BAJI-V2.0.48`；手表交互参考 `C:\Users\YuYevi\Desktop\Demo\智能手表`。当前固件只使用 ESP32-S3 内置 Wi-Fi，不初始化或使用原板载 ML307 蜂窝模组；板级入口组织沿用微雪 1.85 的方式，新增实现集中在 `common`。
+ESP32-S3 / 360 × 360 ST77916 / ES8311 / CST836U。板级硬件移植自 `C:\Zero\BAJI工具\BAJI-V2.0.48`；手表交互参考 `C:\Users\YuYevi\Desktop\Demo\智能手表`。当前固件只使用 ESP32-S3 内置 Wi-Fi，不初始化或使用原板载 ML307 蜂窝模组；板级入口组织沿用微雪 2.1 的方式，新增实现集中在 `common`。
 
 ## 页面与操作
 
@@ -43,7 +43,7 @@ AI 背景使用用户提供的 `standby.mp4` 和 `speaking.mp4` 对应的原始 
 
 2026-09-28 按用户要求回退到“现在表盘UI使用的字体有哪些”对话时的界面：保留上述图片画质修复和 AI 顶部透明文字；撤销之后的原生字体替换及 AI 状态中英文映射。该时点 AI 小时间使用表盘 Segoe UI 14px，中文状态、用户转写及 AI 回复使用表盘 Noto Sans SC Regular 14px。重新编译的应用与该时点记录完全一致：3,201,760字节，SHA-256 `EE7DD6206DB8A1A08A6F960E2A49E491F8E4389D42A9A48B9ED745499F478E60`。仅将应用写回 COM6，写后哈希校验通过，图片资源未改动。25秒启动日志确认 ELF `7a3fb839b`、资源包70字体/138图标/80帧/10fps、Wi-Fi、`ota_0`、服务连接及进入空闲状态，无崩溃。记录为 `build/display_quality_verify/pre-font-rollback-build.log`、`pre-font-rollback-flash.log` 和 `pre-font-rollback-boot.log`；源码及固件备份在同目录 `pre-font-rollback-backup`。未目视检查实屏。
 
-生成器回归测试：`python main/boards/baji-touch-1.85lcd-wifi/common/tools/test_watch_resources.py -v`，设置 `FFMPEG` 环境变量可运行实际转码测试。覆盖原 MJPEG 字节及顺序保留、明亮帧边缘亮度、尺寸与帧率约束、旧 v4→v5 字体图标保持及损坏帧表拒绝。修复前后背景对比、资源 SHA 和构建记录位于 `build/display_quality_verify`；这些背景图为软件重建，不是实机照片。
+生成器回归测试：`python main/boards/baji-touch-2.1lcd-wifi/common/tools/test_watch_resources.py -v`，设置 `FFMPEG` 环境变量可运行实际转码测试。覆盖原 MJPEG 字节及顺序保留、明亮帧边缘亮度、尺寸与帧率约束、旧 v4→v5 字体图标保持及损坏帧表拒绝。修复前后背景对比、资源 SHA 和构建记录位于 `build/display_quality_verify`；这些背景图为软件重建，不是实机照片。
 
 2026-09-28 已经用户确认烧录至 COM6。设备 Flash 的应用（3,201,776字节）、assets（6,794,384字节）和分区表均通过 esptool 直接哈希比对；assets 内 v5 包及三张壁纸与生产资源逐字节一致。OTA 状态区已由启动流程从初始空白改为 `ota_seq=1, ota_state=2 (VALID)`，因此不能要求它在启动后仍与 `ota_data_initial.bin` 相同。重启采集25秒，确认 ESP-IDF 5.5.4、新资源70字体/138图标/80帧/10fps、背光100%、运行分区 `ota_0`、Wi-Fi和服务连接成功，无崩溃或资源加载失败。日志仍有4G模块串口波特率检测超时；本轮使用Wi-Fi，未验证4G。实屏亮度、色彩和真实AI会话播放流畅度仍需现场验收。设备验证记录为 `build/display_quality_verify/device-verification.json`，启动日志为同目录 `device-boot.log`。
 
@@ -115,7 +115,7 @@ TE 上升沿建立扫描时基，单次定时器在半周期唤醒；唤醒时�
 
 触控使用板级 CST836U 驱动和独立采样任务。CST836U 的事件码（DOWN/UP/CONTACT）保存在坐标高字节，不能直接套用 CST816S 的“点数非零即按下”逻辑；驱动会保留事件码、拒绝非法点数/坐标，采样任务再把事件转换为 LVGL 的按下、移动和释放。I²C 读操作在独立任务中完成，使用 400 kHz 和 20 ms 单次超时，LVGL 只消费有界 FIFO。LCD 初始化前已复位，触控驱动不再次拉低共用复位。触控方向跟随 `config.h` 的显示镜像设置。
 
-空点数释放需要两次连续采样确认（约 10 ms），避免单次 I²C/控制器空帧切断滑动；显式 UP 帧立即释放。丢失触点超时和 FIFO 溢出会取消当前 LVGL 手势，并抑制同一根仍按住的手指，直到控制器确认抬手。主机状态回归测试：`g++ -std=c++17 -Wall -Wextra -Werror -pedantic main/boards/baji-touch-1.85lcd-wifi/common/tools/test_touch_sample_buffer.cpp -o build/test_touch_sample_buffer.exe && build/test_touch_sample_buffer.exe`。
+空点数释放需要两次连续采样确认（约 10 ms），避免单次 I²C/控制器空帧切断滑动；显式 UP 帧立即释放。丢失触点超时和 FIFO 溢出会取消当前 LVGL 手势，并抑制同一根仍按住的手指，直到控制器确认抬手。主机状态回归测试：`g++ -std=c++17 -Wall -Wextra -Werror -pedantic main/boards/baji-touch-2.1lcd-wifi/common/tools/test_touch_sample_buffer.cpp -o build/test_touch_sample_buffer.exe && build/test_touch_sample_buffer.exe`。
 
 按实物要求移除六轴传感器、抬腕唤醒和姿态校准，不再探测或轮询 IMU。手动唤醒只使用实体电源键；闹钟、倒计时与日程到点仍可亮屏提醒。旧存储中的抬腕标志被忽略，不清除已有闹钟或日程。
 
