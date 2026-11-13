@@ -333,6 +333,11 @@ extern "C" lv_display_t* __wrap_lvgl_port_add_disp(const lvgl_port_display_cfg_t
     };
     phase_timer.name = "lcd_phase";
     ESP_ERROR_CHECK(esp_timer_create(&phase_timer, &transport.phase_timer));
+    // lvgl_port_add_disp() installs its generic completion callback. This
+    // board replaces the port flush path below and owns flush_ready itself, so
+    // remove the unused callback before installing the DMA completion handler.
+    const esp_lcd_panel_io_callbacks_t clear_callbacks{};
+    ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(transport.io, &clear_callbacks, nullptr));
     const esp_lcd_panel_io_callbacks_t callbacks{.on_color_trans_done = TransferDone};
     ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(transport.io, &callbacks, nullptr));
     const esp_err_t isr_result = gpio_install_isr_service(0);

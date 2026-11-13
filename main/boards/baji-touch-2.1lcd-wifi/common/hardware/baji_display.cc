@@ -229,11 +229,9 @@ bool StartTouchSampler(esp_lcd_touch_handle_t touch, lv_indev_t* indev,
     g_touch_enabled.store(false);
     if (touch->config.int_gpio_num != GPIO_NUM_NC) {
         gpio_intr_disable(touch->config.int_gpio_num);
-        const esp_err_t isr_result = gpio_install_isr_service(0);
-        if (isr_result != ESP_OK && isr_result != ESP_ERR_INVALID_STATE) {
-            g_touch_device = nullptr;
-            return false;
-        }
+        // The LCD TE transport installs the shared GPIO ISR service before
+        // this display initializes its touch input. Do not install it again:
+        // IDF logs ESP_ERR_INVALID_STATE at ERROR level for that harmless call.
         touch->config.interrupt_callback = TouchInterrupt;
         const esp_err_t ret = gpio_isr_handler_add(touch->config.int_gpio_num,
                                                     reinterpret_cast<gpio_isr_t>(TouchInterrupt), touch);
