@@ -1,4 +1,7 @@
 #include "baji_display.h"
+#include "baji_touch_cst836u.h"
+#include "baji_touch_io.h"
+#include "touch_sample_buffer.h"
 
 #include "assets.h"
 #include "config.h"
@@ -6,13 +9,299 @@
 #include "system_info.h"
 #include "resources/charging_icon.h"
 
-#include <esp_lcd_touch_cst816s.h>
 #include <esp_lvgl_port.h>
 #include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <esp_err.h>
+#include <esp_timer.h>
+#include <driver/gpio.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <utility>
 
 extern "C" esp_err_t __real_lvgl_port_init(const lvgl_port_cfg_t* cfg);
+
+namespace {
+
+// Match LVGL's 5 ms input timer.  The sampler performs the short I2C read
+// outside the LVGL task, so this keeps motion latency bounded without making
+// rendering wait on the shared codec bus.
+constexpr uint32_t kTouchSamplePeriodMs = 5;
+constexpr uint32_t kTouchIdlePeriodMs = 40;
+constexpr uint32_t kTouchReleaseTimeoutMs = 90;
+constexpr uint32_t kTouchErrorBackoffMs = 100;
+constexpr UBaseType_t kTouchSamplerPriority = 6;
+constexpr uint32_t kTouchSamplerStackBytes = 3072;
+
+portMUX_TYPE g_touch_lock = portMUX_INITIALIZER_UNLOCKED;
+baji::touch::SampleBuffer g_touch_samples;
+StaticSemaphore_t g_touch_sem_storage;
+StaticSemaphore_t g_touch_idle_storage;
+SemaphoreHandle_t g_touch_sem = nullptr;
+SemaphoreHandle_t g_touch_idle = nullptr;
+StaticTask_t g_touch_task_storage;
+StackType_t g_touch_task_stack[kTouchSamplerStackBytes / sizeof(StackType_t)];
+TaskHandle_t g_touch_task = nullptr;
+esp_lcd_touch_handle_t g_touch_device = nullptr;
+std::atomic<bool> g_touch_isr_registered{false};
+std::atomic<bool> g_touch_ignore_until_up{false};
+std::atomic<bool> g_touch_enabled{false};
+int32_t g_touch_max_x = 0;
+int32_t g_touch_max_y = 0;
+
+TickType_t TouchWaitTicks(uint32_t ms) {
+    return std::max<TickType_t>(1, pdMS_TO_TICKS(ms));
+}
+
+bool TouchExpire(int64_t now_us) {
+    bool expired = false;
+    portENTER_CRITICAL(&g_touch_lock);
+    expired = g_touch_samples.Expire(now_us, static_cast<int64_t>(kTouchReleaseTimeoutMs) * 1000);
+    portEXIT_CRITICAL(&g_touch_lock);
+    if (expired) g_touch_ignore_until_up.store(true);
+    return expired;
+}
+
+bool TouchStore(uint16_t x, uint16_t y, bool pressed, int64_t now_us) {
+    x = std::min<uint16_t>(x, static_cast<uint16_t>(std::max<int32_t>(0, g_touch_max_x)));
+    y = std::min<uint16_t>(y, static_cast<uint16_t>(std::max<int32_t>(0, g_touch_max_y)));
+    portENTER_CRITICAL(&g_touch_lock);
+    const bool overflow = g_touch_samples.Push(x, y, pressed, now_us);
+    portEXIT_CRITICAL(&g_touch_lock);
+    if (overflow) g_touch_ignore_until_up.store(true);
+    return overflow;
+}
+
+void IRAM_ATTR TouchInterrupt(esp_lcd_touch_handle_t) {
+    BaseType_t higher = pdFALSE;
+    if (g_touch_sem != nullptr) {
+        xSemaphoreGiveFromISR(g_touch_sem, &higher);
+    }
+    if (higher == pdTRUE) {
+        portYIELD_FROM_ISR();
+    }
+}
+
+bool TouchReadChip(bool from_interrupt) {
+    (void)from_interrupt;
+    if (g_touch_device == nullptr || esp_lcd_touch_read_data(g_touch_device) != ESP_OK) {
+        return false;
+    }
+    esp_lcd_touch_point_data_t point{};
+    uint8_t point_count = 0;
+    if (esp_lcd_touch_get_data(g_touch_device, &point, &point_count, 1) != ESP_OK) {
+        return false;
+    }
+    const int64_t now_us = esp_timer_get_time();
+    if (g_touch_ignore_until_up.load()) {
+        if (point_count != 0 && point.track_id == BAJI_CST836U_EVENT_UP) {
+            g_touch_ignore_until_up.store(false);
+        }
+        if (point_count == 0) {
+            bool confirmed_release = false;
+            portENTER_CRITICAL(&g_touch_lock);
+            confirmed_release = g_touch_samples.ObserveNoContact(now_us);
+            portEXIT_CRITICAL(&g_touch_lock);
+            if (confirmed_release) g_touch_ignore_until_up.store(false);
+            return true;
+        }
+        // Ignore a finger already on the glass when the display wakes. This
+        // prevents the wake transition from becoming an accidental tap.
+        if (g_touch_ignore_until_up.load()) return true;
+    }
+    if (point_count != 0) {
+        switch (point.track_id) {
+        case BAJI_CST836U_EVENT_DOWN:
+        case BAJI_CST836U_EVENT_CONTACT:
+            TouchStore(point.x, point.y, true, now_us);
+            break;
+        case BAJI_CST836U_EVENT_UP:
+            // CST836U reports UP with count=1 and the last coordinate.  The
+            // stock CST816S adapter drops the event bits and turns this into
+            // another PRESSED sample, which is the source of stuck/ghost
+            // gestures on this controller.
+            TouchStore(point.x, point.y, false, now_us);
+            break;
+        default:
+            // The custom driver rejects unknown events, but keep this guard at
+            // the LVGL boundary so a malformed frame cannot become a press.
+            TouchExpire(now_us);
+            break;
+        }
+    } else {
+        portENTER_CRITICAL(&g_touch_lock);
+        g_touch_samples.ObserveNoContact(now_us);
+        portEXIT_CRITICAL(&g_touch_lock);
+    }
+    return true;
+}
+
+void TouchSamplerTask(void*) {
+    unsigned failures = 0;
+    unsigned retries = 0;
+    for (;;) {
+        if (!g_touch_enabled.load()) {
+            xSemaphoreGive(g_touch_idle);
+            xSemaphoreTake(g_touch_sem, portMAX_DELAY);
+            failures = retries = 0;
+            continue;
+        }
+        portENTER_CRITICAL(&g_touch_lock);
+        bool pressed = g_touch_samples.Current().pressed;
+        portEXIT_CRITICAL(&g_touch_lock);
+        const uint32_t wait_ms = failures >= 3 ? kTouchErrorBackoffMs :
+            (pressed || retries || g_touch_ignore_until_up.load() ? kTouchSamplePeriodMs : kTouchIdlePeriodMs);
+        const bool from_interrupt = xSemaphoreTake(g_touch_sem, TouchWaitTicks(wait_ms)) == pdTRUE;
+        if (!g_touch_enabled.load()) {
+            // A pause can interrupt the periodic wait. Acknowledge it here so
+            // the owner can safely tear down or pause the touch device.
+            xSemaphoreGive(g_touch_idle);
+            continue;
+        }
+        TouchExpire(esp_timer_get_time());
+        portENTER_CRITICAL(&g_touch_lock);
+        pressed = g_touch_samples.Current().pressed;
+        portEXIT_CRITICAL(&g_touch_lock);
+        const bool interrupt_active = g_touch_device != nullptr &&
+            g_touch_device->config.int_gpio_num != GPIO_NUM_NC &&
+            gpio_get_level(g_touch_device->config.int_gpio_num) == g_touch_device->config.levels.interrupt;
+        if (from_interrupt || pressed || retries != 0 || interrupt_active ||
+            g_touch_ignore_until_up.load()) {
+            if (TouchReadChip(from_interrupt)) {
+                failures = retries = 0;
+            } else {
+                if (failures < 3) ++failures;
+                if (from_interrupt) retries = 3;
+                else if (retries != 0) --retries;
+                // A shared-bus NACK must not spin the sampler or make LVGL
+                // wait on I2C. Expiry still releases a lost gesture.
+                vTaskDelay(TouchWaitTicks(kTouchSamplePeriodMs));
+            }
+        }
+        TouchExpire(esp_timer_get_time());
+    }
+}
+
+void TouchReadCb(lv_indev_t* indev, lv_indev_data_t* data) {
+    portENTER_CRITICAL(&g_touch_lock);
+    const bool expired = g_touch_samples.Expire(
+        esp_timer_get_time(), static_cast<int64_t>(kTouchReleaseTimeoutMs) * 1000);
+    const auto sample = g_touch_samples.Pop();
+    data->continue_reading = g_touch_samples.Pending();
+    portEXIT_CRITICAL(&g_touch_lock);
+    if (expired) g_touch_ignore_until_up.store(true);
+    if (sample.cancelled) {
+        // Timeout and FIFO overflow abort the gesture. Reset the active LVGL
+        // object in the input task before the RELEASED state can emit CLICKED.
+        lv_indev_reset(indev, nullptr);
+    }
+    data->point.x = sample.x;
+    data->point.y = sample.y;
+    data->state = sample.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+void PauseTouchSampler(bool ignore_until_up = false);
+bool ResumeTouchSampler();
+void StopTouchSampler();
+
+bool StartTouchSampler(esp_lcd_touch_handle_t touch, lv_indev_t* indev,
+                       int32_t max_x, int32_t max_y) {
+    if (touch == nullptr || indev == nullptr || g_touch_device != nullptr) return false;
+    g_touch_device = touch;
+    g_touch_max_x = max_x;
+    g_touch_max_y = max_y;
+    portENTER_CRITICAL(&g_touch_lock);
+    g_touch_samples.Clear();
+    portEXIT_CRITICAL(&g_touch_lock);
+    if (g_touch_task == nullptr) {
+        g_touch_sem = xSemaphoreCreateBinaryStatic(&g_touch_sem_storage);
+        g_touch_idle = xSemaphoreCreateBinaryStatic(&g_touch_idle_storage);
+        g_touch_task = xTaskCreateStatic(TouchSamplerTask, "baji_touch",
+                                         kTouchSamplerStackBytes / sizeof(StackType_t), nullptr,
+                                         kTouchSamplerPriority, g_touch_task_stack, &g_touch_task_storage);
+        if (g_touch_task == nullptr) {
+            g_touch_device = nullptr;
+            return false;
+        }
+    }
+    g_touch_enabled.store(false);
+    if (touch->config.int_gpio_num != GPIO_NUM_NC) {
+        gpio_intr_disable(touch->config.int_gpio_num);
+        const esp_err_t isr_result = gpio_install_isr_service(0);
+        if (isr_result != ESP_OK && isr_result != ESP_ERR_INVALID_STATE) {
+            g_touch_device = nullptr;
+            return false;
+        }
+        touch->config.interrupt_callback = TouchInterrupt;
+        const esp_err_t ret = gpio_isr_handler_add(touch->config.int_gpio_num,
+                                                    reinterpret_cast<gpio_isr_t>(TouchInterrupt), touch);
+        if (ret != ESP_OK) {
+            touch->config.interrupt_callback = nullptr;
+            g_touch_device = nullptr;
+            return false;
+        }
+        g_touch_isr_registered = true;
+    }
+    lv_indev_set_read_cb(indev, TouchReadCb);
+    lv_indev_set_mode(indev, LV_INDEV_MODE_TIMER);
+    if (lv_timer_t* timer = lv_indev_get_read_timer(indev)) {
+        lv_timer_set_period(timer, kTouchSamplePeriodMs);
+    }
+    g_touch_ignore_until_up.store(false);
+    if (!ResumeTouchSampler()) {
+        StopTouchSampler();
+        return false;
+    }
+    return true;
+}
+
+void PauseTouchSampler(bool ignore_until_up) {
+    if (g_touch_task == nullptr || g_touch_device == nullptr) return;
+    g_touch_enabled.store(false);
+    if (g_touch_device->config.int_gpio_num != GPIO_NUM_NC) {
+        gpio_intr_disable(g_touch_device->config.int_gpio_num);
+    }
+    // Drain a previous acknowledgement before waiting for the acknowledgement
+    // belonging to this pause request. This joins any in-flight I2C call.
+    xSemaphoreTake(g_touch_idle, 0);
+    xSemaphoreGive(g_touch_sem);
+    xSemaphoreTake(g_touch_idle, portMAX_DELAY);
+    portENTER_CRITICAL(&g_touch_lock);
+    g_touch_samples.Clear();
+    if (ignore_until_up) g_touch_samples.SuppressUntilRelease();
+    portEXIT_CRITICAL(&g_touch_lock);
+    if (ignore_until_up) g_touch_ignore_until_up = true;
+}
+
+bool ResumeTouchSampler() {
+    if (g_touch_task == nullptr || g_touch_device == nullptr) return false;
+    if (g_touch_enabled.load()) return true;
+    g_touch_enabled.store(true);
+    if (g_touch_device->config.int_gpio_num != GPIO_NUM_NC) {
+        const esp_err_t ret = gpio_intr_enable(g_touch_device->config.int_gpio_num);
+        if (ret != ESP_OK) {
+            g_touch_enabled.store(false);
+            return false;
+        }
+    }
+    xSemaphoreGive(g_touch_sem);
+    return true;
+}
+
+void StopTouchSampler() {
+    if (g_touch_device == nullptr) return;
+    PauseTouchSampler();
+    if (g_touch_isr_registered && g_touch_device->config.int_gpio_num != GPIO_NUM_NC) {
+        gpio_isr_handler_remove(g_touch_device->config.int_gpio_num);
+        g_touch_isr_registered = false;
+    }
+    g_touch_device->config.interrupt_callback = nullptr;
+    g_touch_device = nullptr;
+}
+
+}  // namespace
 
 extern "C" esp_err_t __wrap_lvgl_port_init(const lvgl_port_cfg_t* cfg) {
     // The watch rebuilds nested pages from LVGL input callbacks. Reserve room
@@ -39,7 +328,11 @@ BajiDisplay::BajiDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
 BajiDisplay::~BajiDisplay() {
     DisplayLockGuard lock(this);
     watch_ui_.reset();
-    if (touch_indev_) lvgl_port_remove_touch(touch_indev_);
+    if (touch_indev_) {
+        StopTouchSampler();
+        lv_indev_delete(touch_indev_);
+        touch_indev_ = nullptr;
+    }
     if (touch_) esp_lcd_touch_del(touch_);
     if (touch_io_) esp_lcd_panel_io_del(touch_io_);
 }
@@ -48,13 +341,9 @@ void BajiDisplay::InitializeTouch(i2c_master_bus_handle_t i2c_bus) {
     DisplayLockGuard lock(this);
     if (touch_indev_) return;
 
-    esp_lcd_panel_io_i2c_config_t io_config = {};
-    io_config.dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS;
-    io_config.scl_speed_hz = 100000;
-    io_config.control_phase_bytes = 1;
-    io_config.lcd_cmd_bits = 8;
-    io_config.flags.disable_control_phase = 1;
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(i2c_bus, &io_config, &touch_io_));
+    // The touch controller shares I2C0 with ES8311/TCA9554.  Use fast mode;
+    // the dedicated adapter bounds every transaction to 20 ms.
+    ESP_ERROR_CHECK(baji_touch_new_i2c_io(i2c_bus, &touch_io_));
     const esp_lcd_touch_config_t touch_config = {
         .x_max = DISPLAY_WIDTH - 1,
         .y_max = DISPLAY_HEIGHT - 1,
@@ -71,18 +360,22 @@ void BajiDisplay::InitializeTouch(i2c_master_bus_handle_t i2c_bus) {
             .mirror_y = DISPLAY_MIRROR_Y,
         },
     };
-    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_cst816s(touch_io_, &touch_config, &touch_));
+    ESP_ERROR_CHECK(baji_touch_new_i2c_cst836u(touch_io_, &touch_config, &touch_));
     ESP_ERROR_CHECK(gpio_set_pull_mode(TOUCH_INT_GPIO, GPIO_PULLUP_ONLY));
-    const lvgl_port_touch_cfg_t touch_cfg = {
-        .disp = display_,
-        .handle = touch_,
-    };
-    touch_indev_ = lvgl_port_add_touch(&touch_cfg);
-    ESP_ERROR_CHECK(touch_indev_ ? ESP_OK : ESP_FAIL);
+    // Keep I2C reads out of the LVGL task.  The sampler is woken by INT and
+    // continues at 5 ms while pressed; LVGL only consumes its bounded FIFO.
+    touch_indev_ = lv_indev_create();
+    ESP_ERROR_CHECK(touch_indev_ ? ESP_OK : ESP_ERR_NO_MEM);
+    lv_indev_set_type(touch_indev_, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_disp(touch_indev_, display_);
+    ESP_ERROR_CHECK(StartTouchSampler(touch_, touch_indev_, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1)
+                        ? ESP_OK : ESP_ERR_INVALID_STATE);
     lv_indev_add_event_cb(touch_indev_, [](lv_event_t* event) {
         static_cast<BajiDisplay*>(lv_event_get_user_data(event))->OnTouchPressed();
     }, LV_EVENT_PRESSED, this);
-    ESP_LOGI("BajiDisplay", "CST836U touch registered: I2C 0x15, INT GPIO%d", TOUCH_INT_GPIO);
+    ESP_LOGI("BajiDisplay", "CST836U touch registered: I2C 0x%02X, 400kHz, INT GPIO%d, sampler=%ums",
+             TOUCH_I2C_ADDRESS, TOUCH_INT_GPIO,
+             static_cast<unsigned>(kTouchSamplePeriodMs));
 }
 
 void BajiDisplay::SetupUI() {
@@ -229,7 +522,19 @@ void BajiDisplay::SetWatchActionCallback(WatchUi::ActionCallback callback) {
 
 void BajiDisplay::SetWatchAwake(bool awake) {
     DisplayLockGuard lock(this);
-    if (watch_awake_ != awake && touch_indev_) lv_indev_wait_release(touch_indev_);
+    if (watch_awake_ == awake) return;
+    if (touch_indev_) {
+        if (!awake) {
+            PauseTouchSampler(true);
+            lv_indev_wait_release(touch_indev_);
+        } else {
+            // A contact held through wake is discarded until its UP report.
+            g_touch_ignore_until_up = true;
+            if (!ResumeTouchSampler()) {
+                ESP_LOGE("BajiDisplay", "Touch sampler could not resume after wake");
+            }
+        }
+    }
     watch_awake_ = awake;
     if (watch_ui_) watch_ui_->SetAwake(awake);
 }

@@ -113,7 +113,9 @@ TE 上升沿建立扫描时基，单次定时器在半周期唤醒；唤醒时�
 | 原 ML307 UART | ESP TX 47、RX 48、DTR 38（当前固件未配置） |
 | 电源 / 电池 | 保持 GPIO1、电源键 GPIO2、USB 检测 GPIO5、电池 ADC GPIO4、充电 STAT GPIO16 |
 
-触控复用已有 CST816S 单点协议组件和 `lvgl_port_add_touch()`，没有新建触控驱动。LCD 初始化前已复位，触控驱动不再次拉低共用复位。触控方向跟随 `config.h` 的显示镜像设置。
+触控使用板级 CST836U 驱动和独立采样任务。CST836U 的事件码（DOWN/UP/CONTACT）保存在坐标高字节，不能直接套用 CST816S 的“点数非零即按下”逻辑；驱动会保留事件码、拒绝非法点数/坐标，采样任务再把事件转换为 LVGL 的按下、移动和释放。I²C 读操作在独立任务中完成，使用 400 kHz 和 20 ms 单次超时，LVGL 只消费有界 FIFO。LCD 初始化前已复位，触控驱动不再次拉低共用复位。触控方向跟随 `config.h` 的显示镜像设置。
+
+空点数释放需要两次连续采样确认（约 10 ms），避免单次 I²C/控制器空帧切断滑动；显式 UP 帧立即释放。丢失触点超时和 FIFO 溢出会取消当前 LVGL 手势，并抑制同一根仍按住的手指，直到控制器确认抬手。主机状态回归测试：`g++ -std=c++17 -Wall -Wextra -Werror -pedantic main/boards/baji-touch-1.85lcd-wifi/common/tools/test_touch_sample_buffer.cpp -o build/test_touch_sample_buffer.exe && build/test_touch_sample_buffer.exe`。
 
 按实物要求移除六轴传感器、抬腕唤醒和姿态校准，不再探测或轮询 IMU。手动唤醒只使用实体电源键；闹钟、倒计时与日程到点仍可亮屏提醒。旧存储中的抬腕标志被忽略，不清除已有闹钟或日程。
 
@@ -228,6 +230,7 @@ ETA6098 官方手册确认 STAT 充电时拉低、结束时高阻，但没有给
 | `common/ui/watch_resources.*` | 原型字体 / Lucide 图标加载、人物 JPEG 帧解码与播放，资源生命周期和 PSRAM 管理 |
 | `common/tools/generate_watch_resources.py` | 生成单个资源包，支持保留字体/图标只替换双视频；完整生成时递归收集拆分页的文案 |
 | `common/tools/test_battery_estimator.cpp` | 主机电量回归测试，不编入固件，覆盖插拔、噪声、恢复、恒压及低电状态 |
+| `common/tools/test_touch_sample_buffer.cpp` | 主机触控状态回归测试，不编入固件，覆盖按下/移动/抬手、空帧防抖、超时取消和 FIFO 溢出 |
 | `common/resources/watch_ui.pack` | 字体子集、原型图标、人物动画集中在一个包内 |
 | `common/resources/*.rgb565` | 用户提供的 3 张 360 × 360 JPG 转换为壁纸，每张 12 字节 LVGL9 头和 RGB565 像素 |
 

@@ -52,7 +52,8 @@ void WatchUi::ShowPowerMenu(bool show) {
         Bind(hit, [circle](lv_event_t* event) {
             const auto code = lv_event_get_code(event);
             if (code == LV_EVENT_PRESSED) AnimateMenuPlate(circle, 248, 90);
-            if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)
+            if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST ||
+                code == LV_EVENT_INDEV_RESET)
                 AnimateMenuPlate(circle, 256, 120);
         });
         Text(hit, item.text, 0, 65, 66, 14, item.ink, 400, true, 22);

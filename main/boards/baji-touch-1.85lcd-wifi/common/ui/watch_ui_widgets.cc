@@ -657,7 +657,7 @@ lv_obj_t* WatchUi::Button(lv_obj_t* p, int x, int y, int w, int h, uint32_t c, i
                                   point.y < bounds.y1 || point.y > bounds.y2;
             }
         }
-        if (code == LV_EVENT_PRESS_LOST) press->active = false;
+        if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_INDEV_RESET) press->active = false;
         if (code == LV_EVENT_CLICKED && press->active && !press->dragged &&
             awake_ && !swiped_ && !power_transition_ && press->generation == menu_input_generation_) {
             press->active = false;

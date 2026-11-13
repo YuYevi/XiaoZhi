@@ -58,7 +58,8 @@ void WatchUi::ToggleControl(bool show) {
         Bind(hit, [tile](lv_event_t* event) {
             auto code = lv_event_get_code(event);
             if (code == LV_EVENT_PRESSED) AnimateMenuPlate(tile, 248, 90);
-            if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)
+            if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST ||
+                code == LV_EVENT_INDEV_RESET)
                 AnimateMenuPlate(tile, 256, 120);
         });
         lv_obj_set_style_transform_pivot_x(tile, 28, 0);
