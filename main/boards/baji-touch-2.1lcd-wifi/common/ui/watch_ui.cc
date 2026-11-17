@@ -169,6 +169,9 @@ void WatchUi::Render() {
         case Page::DisplaySettings:
             RenderDisplaySettings();
             break;
+        case Page::DeviceInfo:
+            RenderDeviceInfo();
+            break;
         case Page::AlarmEditor:
             RenderAlarmEditor();
             break;
@@ -342,6 +345,7 @@ void WatchUi::GoBack() {
             Navigate(Page::Alarms);
             break;
         case Page::DisplaySettings:
+        case Page::DeviceInfo:
             Navigate(Page::Settings);
             break;
         case Page::Network:
@@ -561,7 +565,7 @@ void WatchUi::Tick() {
          (snapshot_.time_valid && old.now / 86400 != snapshot_.now / 86400));
     if (!rebuilt && (calendar_day_changed || (snapshot_.revision != revision_ &&
         (page_ == Page::Calendar || page_ == Page::Alarms || page_ == Page::Settings ||
-         page_ == Page::DisplaySettings ||
+         page_ == Page::DisplaySettings || page_ == Page::DeviceInfo ||
          (page_ == Page::Standby && old.settings.show_clock != snapshot_.settings.show_clock))))) {
         if (calendar_day_changed) page_scroll_ = nullptr;
         Render();

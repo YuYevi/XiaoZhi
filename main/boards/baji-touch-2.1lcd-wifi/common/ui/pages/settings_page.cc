@@ -42,12 +42,9 @@ void WatchUi::RenderSettings() {
     detail(item, english ? "Check for updates" : "点击检查更新");
     arrow(item);
 
-    item = row("info", "关于手表", kMuted, [this] {
-        const std::string details = "BAJI Watch\n\n" + device_.firmware + "\n" +
-            LocalizedText(device_.network, snapshot_.settings.language != 0);
-        SetSystemMessage(details.c_str(), 0);
-    });
+    item = row("info", "设备信息", kBlue, [this] { Navigate(Page::DeviceInfo); });
     detail(item, device_.firmware.c_str());
+    arrow(item);
 
     item = row("trash-2", "恢复出厂设置", kBlue, [this] {
         Confirm("恢复出厂设置", snapshot_.settings.language ?
@@ -59,4 +56,30 @@ void WatchUi::RenderSettings() {
     arrow(item);
     if (!snapshot_.storage_error.empty())
         Text(list, snapshot_.storage_error.c_str(), 10, y + 4, 220, 12, kRose, 400, false, 18, 14);
+}
+
+void WatchUi::RenderDeviceInfo() {
+    PageTitle("设备信息", kBlue);
+    auto* list = page_scroll_ = ScrollList(content_, 60, 96, 240, 210);
+    struct InfoRow {
+        const char* label;
+        const char* value;
+    };
+    // These board parameters match config.json/config.h.
+    const InfoRow rows[] = {
+        {"系统版本：", device_.firmware.empty() ? "--" : device_.firmware.c_str()},
+        {"主控芯片：", "ESP32-S3"},
+        {"屏幕：", "2.1寸屏幕"},
+        {"唤醒词：", "你好小智"},
+        {"MAC地址：", device_.mac_address.empty() ? "--" : device_.mac_address.c_str()},
+    };
+    for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); ++i) {
+        const int y = static_cast<int>(i) * 42;
+        SingleLine(Text(list, rows[i].label, 0, y + 10, 92, 14, kMuted, 400, false, 22));
+        auto* value = Text(list, rows[i].value, 98, y + 10, 142, 14, kText, 400, false, 22);
+        SingleLine(value);
+        lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+        if (i + 1 < sizeof(rows) / sizeof(rows[0]))
+            Box(list, 0, y + 41, 240, 1, 0xffffff, 0, 22);
+    }
 }

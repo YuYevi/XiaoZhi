@@ -26,6 +26,7 @@ class WatchUi {
         Countdown,
         Settings,
         DisplaySettings,
+        DeviceInfo,
         AlarmEditor,
         Network,
         Lightstick
@@ -56,6 +57,7 @@ class WatchUi {
         int battery = -1, volume = 50, brightness = 50;
         bool charging = false, chat_active = false;
         std::string firmware;
+        std::string mac_address;
     };
     struct WifiNetwork {
         std::string ssid;
@@ -237,6 +239,7 @@ class WatchUi {
     void RenderAlarmEditor();
     void RenderSettings();
     void RenderDisplaySettings();
+    void RenderDeviceInfo();
     lv_obj_t* SettingsRow(lv_obj_t* parent, int y, const char* icon, const char* title,
                           uint32_t accent, std::function<void()> action);
     void ShowScreenTimeoutPicker();

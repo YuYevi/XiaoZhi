@@ -7,6 +7,7 @@
 #include "application.h"
 #include "assets/lang_config.h"
 #include "settings.h"
+#include "system_info.h"
 #include <wifi_manager.h>
 #include <esp_network.h>
 #include <esp_wifi.h>
@@ -612,6 +613,7 @@ void WatchRuntime::Tick() {
     if (device.wifi_connected) device.wifi_ssid = wifi.GetSsid();
     device.chat_active = ChatState(app.GetDeviceState());
     device.firmware = esp_app_get_description()->version;
+    device.mac_address = SystemInfo::GetMacAddress();
     charging_ = device.charging;
     display_.TickWatch(device);
 }
