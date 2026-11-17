@@ -80,7 +80,6 @@ public:
     bool Start(std::string* error = nullptr);
     WatchSnapshot Snapshot() const;
     bool SaveSettings(const WatchSettings& settings, std::string* error = nullptr);
-    bool ResetWatchData(std::string* error = nullptr);  // Keeps Wi-Fi and native application settings
     bool SaveAlarm(const WatchAlarm& alarm, uint32_t* assigned_id = nullptr,
                    std::string* error = nullptr);
     bool DeleteAlarm(uint32_t id, std::string* error = nullptr);

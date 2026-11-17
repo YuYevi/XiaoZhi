@@ -49,15 +49,13 @@ void WatchUi::RenderSettings() {
     });
     detail(item, device_.firmware.c_str());
 
-    item = row("rotate-ccw", "重置手表数据", kRose, [this] {
-        Confirm("重置手表数据", snapshot_.settings.language ?
-                "Clear alarms, events and watch settings? This cannot be undone." :
-                "清除闹钟、日程和手表设置？此操作不可撤销。",
+    item = row("trash-2", "恢复出厂设置", kBlue, [this] {
+        Confirm("恢复出厂设置", snapshot_.settings.language ?
+                "Erase all user data, including Wi-Fi, alarms, events and settings? The watch will restart and need Wi-Fi setup again. This cannot be undone." :
+                "清除全部用户数据（包括 Wi-Fi、闹钟、日程和设置）并重启？之后需重新配网，此操作不可撤销。",
                 [this] { Emit(Action::FactoryReset); });
     });
-    lv_obj_set_style_bg_color(item, lv_color_hex(0x281b24), 0);
-    Border(item, kRose, 48);
-    detail(item, english ? "Wi-Fi will be kept" : "不可撤销，Wi-Fi 保留", kRose);
+    detail(item, english ? "Erase all data" : "清除所有内容和设置");
     arrow(item);
     if (!snapshot_.storage_error.empty())
         Text(list, snapshot_.storage_error.c_str(), 10, y + 4, 220, 12, kRose, 400, false, 18, 14);

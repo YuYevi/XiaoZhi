@@ -4,6 +4,7 @@
 #include "config.h"
 #include "hardware/baji_backlight.h"
 #include "hardware/baji_display.h"
+#include "watch/factory_reset.h"
 
 #include <driver/gpio.h>
 #include <driver/ledc.h>
@@ -14,7 +15,6 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <nvs_flash.h>
 
 extern "C" void __real_app_main();
 
@@ -152,16 +152,8 @@ extern "C" void board_charging_only_main(void)
 {
     esp_log_level_set("*", ESP_LOG_ERROR);
 
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
-    } else {
-        ESP_ERROR_CHECK(ret);
-    }
-
     LatchPowerControlOn();
+    ESP_ERROR_CHECK(baji::CompletePendingFactoryReset());
     BajiBatteryMonitor battery;
     battery.Poll();
 
@@ -282,5 +274,6 @@ extern "C" void __wrap_app_main() {
         }
         charging_rtc_clear_low_voltage_flag();
     }
+    ESP_ERROR_CHECK(baji::CompletePendingFactoryReset());
     __real_app_main();
 }

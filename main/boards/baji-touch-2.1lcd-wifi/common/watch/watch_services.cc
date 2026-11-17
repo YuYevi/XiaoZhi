@@ -384,19 +384,6 @@ bool WatchServices::SaveSettings(const WatchSettings& settings, std::string* err
     return impl_->Save(state, error);
 }
 
-bool WatchServices::ResetWatchData(std::string* error) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (!impl_->Save(PersistentState{}, error)) return false;
-    impl_->reminders.clear();
-    impl_->snoozed.clear();
-    impl_->runtime_fired.clear();
-    impl_->countdown = {};
-    impl_->countdown_remaining_us = 0;
-    impl_->countdown_deadline_us = 0;
-    impl_->save_retry_after_us = 0;
-    return true;
-}
-
 bool WatchServices::SaveAlarm(const WatchAlarm& input, uint32_t* assigned_id, std::string* error) {
     if (input.hour > 23 || input.minute > 59 || input.weekdays > 127 || !ValidTitle(input.title))
         return Fail(error, "闹钟时间或标题无效（标题最多60字节）");

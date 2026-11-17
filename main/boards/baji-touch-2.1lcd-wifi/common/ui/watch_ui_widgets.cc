@@ -223,7 +223,7 @@ std::string LocalizedText(const std::string& text, bool english) {
         {"正在重启…", "Restarting…"},
         {"系统更新", "Update"},
         {"关于手表", "About"},
-        {"重置手表数据", "Reset watch"},
+        {"恢复出厂设置", "Factory reset"},
         {"再点一次确认", "Tap again"},
         {"不可撤销", "Permanent"},
         {"点击检查", "Check"},
@@ -303,7 +303,6 @@ std::string LocalizedText(const std::string& text, bool english) {
         {"正在更新，请完成后重试", "Updating. Try again when finished"},
         {"正在准备网络，请稍候", "Preparing network. Please wait"},
         {"设备忙，请稍后重试", "Device busy. Try again later"},
-        {"已重置手表数据，Wi-Fi 已保留", "Watch reset. Wi-Fi settings kept"},
         {"配网服务尚未就绪，请重试", "Wi-Fi setup not ready. Try again"},
         {"配网服务尚未就绪，请稍后重试", "Wi-Fi setup not ready. Try later"},
         {"配网服务地址不匹配", "Wi-Fi setup address mismatch"},
@@ -356,6 +355,7 @@ std::string LocalizedText(const std::string& text, bool english) {
         {"保存失败: ", "Save failed: "},
         {"读取提醒失败: ", "Cannot load reminders: "},
         {"提醒服务启动失败: ", "Cannot start reminders: "},
+        {"恢复出厂设置失败: ", "Factory reset failed: "},
     };
     for (const auto& error : errors) {
         if (!starts_with(error.first)) continue;

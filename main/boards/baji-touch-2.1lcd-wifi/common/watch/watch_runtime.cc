@@ -1,4 +1,5 @@
 #include "watch_runtime.h"
+#include "factory_reset.h"
 
 #include "hardware/baji_display.h"
 #include "hardware/baji_audio_codec.h"
@@ -398,7 +399,7 @@ void WatchRuntime::OnPerformanceRequested() {
 
 void WatchRuntime::Action(WatchUi::Action action, int value) {
     auto& app = Application::GetInstance();
-    if (!IsAwake() || sleep_requested_) return;
+    if (!IsAwake() || sleep_requested_ || power_transition_) return;
     last_activity_ = esp_timer_get_time();
     switch (action) {
         case WatchUi::Action::Activity: break;
@@ -460,9 +461,14 @@ void WatchRuntime::Action(WatchUi::Action action, int value) {
             else display_.ShowNotification("设备忙，请稍后重试");
             break;
         case WatchUi::Action::FactoryReset: {
-            std::string error;
-            if (!services_.ResetWatchData(&error)) display_.ShowNotification(error);
-            else { ApplyPowerSettings(); display_.ShowNotification("已重置手表数据，Wi-Fi 已保留"); }
+            if (app.GetDeviceState() == kDeviceStateUpgrading) {
+                display_.ShowNotification("正在更新，请完成后重试");
+                break;
+            }
+            const esp_err_t result = baji::RequestFactoryReset();
+            if (result != ESP_OK)
+                display_.ShowNotification(std::string("恢复出厂设置失败: ") + esp_err_to_name(result));
+            else RequestPowerChange(true);
             break;
         }
         case WatchUi::Action::SetPowerSave:
