@@ -17,6 +17,7 @@
 #include <cJSON.h>
 #include <cstring>
 #include <limits>
+#include <atomic>
 
 #define TAG "Application"
 
@@ -434,6 +435,7 @@ void Application::CheckNewVersion() {
     const int MAX_RETRY = 10;
     int retry_count = 0;
     int retry_delay = 10;  // Initial retry delay in seconds
+    std::string offered_version;
 
     auto& board = Board::GetInstance();
     while (true) {
@@ -481,15 +483,28 @@ void Application::CheckNewVersion() {
         retry_count = 0;
         retry_delay = 10;  // Reset retry delay
 
-        if (ota_->HasNewVersion()) {
-            if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
+        // A successful version check validates this boot even when the user
+        // postpones the next update. OTA writes also require a valid running app.
+        ota_->MarkCurrentVersionValid();
+        if (ota_->HasNewVersion() && offered_version != ota_->GetFirmwareVersion()) {
+            offered_version = ota_->GetFirmwareVersion();
+            auto decision = std::make_shared<std::atomic<int>>(-1);
+            const bool prompted = display->ConfirmFirmwareUpdate(
+                offered_version, ota_->GetFirmwareNotes(), [decision](bool accepted) {
+                    decision->store(accepted ? 1 : 0);
+                });
+            if (prompted) {
+                // Only the activation worker waits; LVGL and Application keep
+                // servicing touch input and the rest of the device.
+                while (decision->load() < 0) vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            if ((!prompted || decision->load() == 1) &&
+                UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
                 return;  // This line will never be reached after reboot
             }
             // If upgrade failed, continue to normal operation
         }
 
-        // No new version, mark the current version as valid
-        ota_->MarkCurrentVersionValid();
         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
             // Exit the loop if done checking new version
             break;
@@ -1191,6 +1206,7 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
 
     std::string upgrade_url = url;
     std::string version_info = version.empty() ? "(Manual upgrade)" : version;
+    const bool was_activating = GetDeviceState() == kDeviceStateActivating;
 
     if (GetDeviceState() == kDeviceStateNotifying) {
         StopNotification();
@@ -1203,25 +1219,30 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
     }
     ESP_LOGI(TAG, "Starting firmware upgrade from URL: %s", upgrade_url.c_str());
 
-    Alert(Lang::Strings::OTA_UPGRADE, Lang::Strings::UPGRADING, "download",
-          Lang::Sounds::OGG_UPGRADE);
-    vTaskDelay(pdMS_TO_TICKS(3000));
-
-    SetDeviceState(kDeviceStateUpgrading);
+    if (!SetDeviceState(kDeviceStateUpgrading)) return false;
+    const bool upgrade_ui = display->UpdateFirmwareUpdate(FirmwareUpdateStage::Downloading, 0);
+    if (!upgrade_ui) {
+        Alert(Lang::Strings::OTA_UPGRADE, Lang::Strings::UPGRADING, "download",
+              Lang::Sounds::OGG_UPGRADE);
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
 
     std::string message = std::string(Lang::Strings::NEW_VERSION) + version_info;
-    display->SetChatMessage("system", message.c_str());
+    if (!upgrade_ui) display->SetChatMessage("system", message.c_str());
 
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     audio_service_.Stop();
     vTaskDelay(pdMS_TO_TICKS(1000));
 
     bool upgrade_success = Ota::Upgrade(upgrade_url, [this, display](int progress, size_t speed) {
+        if (display->UpdateFirmwareUpdate(FirmwareUpdateStage::Downloading, progress)) return;
         char buffer[32];
         snprintf(buffer, sizeof(buffer), "%d%% %uKB/s", progress, speed / 1024);
         Schedule([display, message = std::string(buffer)]() {
             display->SetChatMessage("system", message.c_str());
         });
+    }, [display]() {
+        display->UpdateFirmwareUpdate(FirmwareUpdateStage::Verifying, 100);
     });
 
     if (!upgrade_success) {
@@ -1229,15 +1250,20 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
         ESP_LOGE(TAG,
                  "Firmware upgrade failed, restarting audio service and continuing operation...");
         audio_service_.Start();                              // Restart audio service
+        SetDeviceState(was_activating ? kDeviceStateActivating : kDeviceStateIdle);
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);  // Restore power save level
-        Alert(Lang::Strings::ERROR, Lang::Strings::UPGRADE_FAILED, "cancel",
-              Lang::Sounds::OGG_EXCLAMATION);
+        if (!display->UpdateFirmwareUpdate(FirmwareUpdateStage::Failed)) {
+            Alert(Lang::Strings::ERROR, Lang::Strings::UPGRADE_FAILED, "cancel",
+                  Lang::Sounds::OGG_EXCLAMATION);
+        }
         vTaskDelay(pdMS_TO_TICKS(3000));
         return false;
     } else {
         // Upgrade success, reboot immediately
         ESP_LOGI(TAG, "Firmware upgrade successful, rebooting...");
-        display->SetChatMessage("system", "Upgrade successful, rebooting...");
+        if (!display->UpdateFirmwareUpdate(FirmwareUpdateStage::Complete, 100)) {
+            display->SetChatMessage("system", "Upgrade successful, rebooting...");
+        }
         vTaskDelay(pdMS_TO_TICKS(1000));  // Brief pause to show message
         Reboot();
         return true;

@@ -3,6 +3,7 @@
 
 #include "emoji_collection.h"
 #include "text_glyph.h"
+#include "firmware_update.h"
 
 #ifndef CONFIG_USE_EMOTE_MESSAGE_STYLE
 #define HAVE_LVGL 1
@@ -15,6 +16,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -48,6 +50,10 @@ public:
     virtual void ClearTextGlyphs() {}
     virtual void SetEmojiCollection(std::shared_ptr<EmojiCollection>) {}
     virtual void SetupUI() { setup_ui_called_ = true; }
+    // Return false when the display uses the existing automatic OTA workflow.
+    virtual bool ConfirmFirmwareUpdate(const std::string& version, const std::string& notes,
+                                      std::function<void(bool)> decision) { return false; }
+    virtual bool UpdateFirmwareUpdate(FirmwareUpdateStage stage, int progress = 0) { return false; }
 
     inline int width() const { return width_; }
     inline int height() const { return height_; }

@@ -519,6 +519,31 @@ void BajiDisplay::SetWatchActionCallback(WatchUi::ActionCallback callback) {
     watch_action_ = std::move(callback);
 }
 
+bool BajiDisplay::ConfirmFirmwareUpdate(const std::string& version, const std::string& notes,
+                                        std::function<void(bool)> decision) {
+    DisplayLockGuard lock(this);
+    if (watch_ui_) watch_ui_->ConfirmFirmwareUpdate(version, notes, std::move(decision));
+    else decision(false);
+    return true;
+}
+
+bool BajiDisplay::UpdateFirmwareUpdate(FirmwareUpdateStage stage, int progress) {
+    DisplayLockGuard lock(this);
+    if (watch_ui_) {
+        watch_ui_->UpdateFirmwareUpdate(stage, progress);
+        // Render the verification state before esp_ota_end starts blocking flash
+        // operations, and the completion state before restarting the processor.
+        if (stage == FirmwareUpdateStage::Verifying || stage == FirmwareUpdateStage::Complete)
+            lv_refr_now(display_);
+    }
+    return true;
+}
+
+bool BajiDisplay::IsFirmwareUpdateActive() {
+    DisplayLockGuard lock(this);
+    return watch_ui_ && watch_ui_->IsFirmwareUpdateActive();
+}
+
 void BajiDisplay::SetWatchAwake(bool awake) {
     DisplayLockGuard lock(this);
     if (watch_awake_ == awake) return;

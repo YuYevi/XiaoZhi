@@ -218,6 +218,7 @@ void WatchRuntime::Wake() {
 
 void WatchRuntime::Sleep() {
     auto& app = Application::GetInstance();
+    if (display_.IsFirmwareUpdateActive()) return;
     if (!awake_ || display_.IsWatchBooting() || flashlight_ || !ScreenCanSleep(app.GetDeviceState()) || ringing_ ||
         (!reminder_timed_out_ && !services_.Snapshot().reminders.empty())) return;
     awake_ = false;
@@ -244,7 +245,7 @@ void WatchRuntime::Back() {
 }
 
 void WatchRuntime::Chat() {
-    if (!IsAwake() || display_.IsWatchBooting()) return;
+    if (!IsAwake() || display_.IsWatchBooting() || display_.IsFirmwareUpdateActive()) return;
     last_activity_ = esp_timer_get_time();
     display_.ShowPowerMenu(false);
     display_.ShowWatchChat();
@@ -268,6 +269,10 @@ void WatchRuntime::FinishPowerTap() {
 
 void WatchRuntime::PowerTap() {
     if (power_transition_) return;
+    if (display_.IsFirmwareUpdateActive()) {
+        CancelPowerTap();
+        return;
+    }
     if (!awake_ || sleep_requested_) {
         CancelPowerTap();
         Wake();
@@ -300,7 +305,7 @@ void WatchRuntime::PowerTap() {
 }
 
 void WatchRuntime::PowerLongPress() {
-    if (power_transition_) return;
+    if (power_transition_ || display_.IsFirmwareUpdateActive()) return;
     CancelPowerTap();
     Wake();
     display_.ShowPowerMenu(true);
@@ -326,7 +331,7 @@ void WatchRuntime::RequestSleep() {
 }
 
 void WatchRuntime::RequestPowerChange(bool reboot) {
-    if (power_transition_) return;
+    if (power_transition_ || display_.IsFirmwareUpdateActive()) return;
     auto& app = Application::GetInstance();
     if (app.GetDeviceState() == kDeviceStateUpgrading) {
         display_.ShowPowerMenu(false);
@@ -401,6 +406,7 @@ void WatchRuntime::OnPerformanceRequested() {
 void WatchRuntime::Action(WatchUi::Action action, int value) {
     auto& app = Application::GetInstance();
     if (!IsAwake() || sleep_requested_ || power_transition_) return;
+    if (display_.IsFirmwareUpdateActive() && action != WatchUi::Action::Activity) return;
     last_activity_ = esp_timer_get_time();
     switch (action) {
         case WatchUi::Action::Activity: break;
@@ -566,6 +572,11 @@ void WatchRuntime::Tick() {
     if (power_transition_) {
         ContinueStopChat();
         if (power_reboot_ && now >= power_reboot_at_) app.Reboot();
+        return;
+    }
+    if (display_.IsFirmwareUpdateActive()) {
+        Wake();
+        app.GetAudioService().EnableWakeWordDetection(false);
         return;
     }
     const auto state = app.GetDeviceState();

@@ -10,6 +10,7 @@
 
 #include "watch/watch_services.h"
 #include "device_state.h"
+#include "display/firmware_update.h"
 // Owns navigation, page objects, overlays and asynchronous results.
 // Page implementations live in ui/pages; shared widgets live in watch_ui_widgets.cc.
 // All UI entry points require the display lock. Storage runs on Application.
@@ -75,6 +76,10 @@ class WatchUi {
     void ClearChatMessages();
     void SetEmotion(const char*);
     void SetSystemMessage(const char*, uint32_t duration_ms = 5000);
+    void ConfirmFirmwareUpdate(const std::string& version, const std::string& notes,
+                               std::function<void(bool)> decision);
+    void UpdateFirmwareUpdate(FirmwareUpdateStage stage, int progress);
+    bool IsFirmwareUpdateActive() const { return firmware_overlay_ != nullptr; }
     void UpdateBootState(DeviceState state);
     bool IsBooting() const { return page_ == Page::BootSplash || page_ == Page::BootFlow; }
     void SetAwake(bool);
@@ -169,6 +174,12 @@ class WatchUi {
              *reminder_ = nullptr, *toast_ = nullptr, *status_ = nullptr;
     lv_obj_t* page_scroll_ = nullptr;
     lv_obj_t *power_overlay_ = nullptr, *power_loader_ = nullptr;
+    lv_obj_t *firmware_overlay_ = nullptr, *firmware_progress_ = nullptr,
+             *firmware_percent_ = nullptr;
+    FirmwareUpdateStage firmware_stage_ = FirmwareUpdateStage::Confirm;
+    int firmware_progress_value_ = 0;
+    std::string firmware_version_, firmware_notes_;
+    std::function<void(bool)> firmware_decision_;
     lv_obj_t *clock_ = nullptr, *date_ = nullptr, *user_label_ = nullptr, *answer_label_ = nullptr,
              *chat_header_ = nullptr, *chat_mic_ = nullptr, *chat_timer_ = nullptr;
     lv_obj_t *wallpaper_obj_ = nullptr, *hour_ = nullptr, *minute_ = nullptr, *timer_label_ = nullptr,
@@ -268,6 +279,8 @@ class WatchUi {
     void Submit(std::function<bool(std::string*)>, Page, const char* success = "");
     void Confirm(const char*, const char*, std::function<void()>);
     void CloseModal();
+    void RenderFirmwareUpdate();
+    void CloseFirmwareUpdate();
     void DrawTabs(bool);
     void DrawKeyboard();
     void RefreshWifiPassword();

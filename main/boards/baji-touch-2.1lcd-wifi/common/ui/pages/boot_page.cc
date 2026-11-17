@@ -101,7 +101,7 @@ void WatchUi::RefreshBoot() {
 }
 
 void WatchUi::UpdateBootState(DeviceState state) {
-    if (!root_ || !IsBooting() || power_transition_) return;
+    if (!root_ || !IsBooting() || power_transition_ || firmware_overlay_) return;
     if (state != boot_state_) boot_status_.clear();
     boot_state_ = state;
     RefreshBoot();

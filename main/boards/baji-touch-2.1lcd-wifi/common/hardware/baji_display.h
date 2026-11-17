@@ -22,6 +22,10 @@ public:
     void ShowNotification(const char* notification, int duration_ms = 3000) override;
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override;
     void UpdateStatusBar(bool update_all = false) override;
+    bool ConfirmFirmwareUpdate(const std::string& version, const std::string& notes,
+                               std::function<void(bool)> decision) override;
+    bool UpdateFirmwareUpdate(FirmwareUpdateStage stage, int progress = 0) override;
+    bool IsFirmwareUpdateActive();
     void ShowChargingFullscreen(bool show);
     void UpdateChargingState(bool usb, bool charging, bool full);
     void SetFirstFrameCallback(std::function<void()> callback);

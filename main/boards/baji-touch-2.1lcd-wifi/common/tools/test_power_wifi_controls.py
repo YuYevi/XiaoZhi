@@ -57,6 +57,8 @@ enum class NetworkEvent { Connected, Disconnected, Scanning, Connecting,
                           WifiConfigModeEnter, WifiConfigModeExit };
 struct Display {
     bool menu = false;
+    bool firmware_update = false;
+    bool IsFirmwareUpdateActive() { return firmware_update; }
     void ShowNotification(const char*) {}
     bool IsPowerMenuOpen() { return menu; }
     void ShowPowerMenu(bool show) { menu = show; }
@@ -208,6 +210,12 @@ int main() {
     assert(!wake.display_.menu && !wake.backs);
     wake.power_transition_ = true; tap(wake); expire(wake);
     assert(!wake.backs && !wake.configs);
+
+    WatchRuntime updating;
+    updating.display_.firmware_update = true;
+    tap(updating); tap(updating); tap(updating); expire(updating);
+    updating.PowerLongPress();
+    assert(!updating.backs && !updating.chats && !updating.configs && !updating.display_.menu);
 
     // Cancel before the delayed enter task has run. The old task must stay inert.
     board.EnterWifiConfigMode();

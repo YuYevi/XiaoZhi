@@ -95,6 +95,7 @@ void WatchUi::SetFonts(const lv_font_t* f, const lv_font_t* i) {
 }
 
 void WatchUi::Navigate(Page p) {
+    if (firmware_overlay_) return;
     ++navigation_generation_;
     if (page_ == Page::Chat && p != page_)
         Emit(Action::StopChat);
@@ -203,10 +204,12 @@ void WatchUi::Render() {
         lv_obj_move_foreground(modal_);
     if (power_overlay_)
         lv_obj_move_foreground(power_overlay_);
+    if (firmware_overlay_)
+        lv_obj_move_foreground(firmware_overlay_);
 }
 
 void WatchUi::UpdateAnimationTimer() {
-    const bool covered = power_overlay_ || control_visible_ || modal_ || reminder_;
+    const bool covered = power_overlay_ || control_visible_ || modal_ || reminder_ || firmware_overlay_;
     wallpaper_transition_.SetPaused(!awake_ || page_ != Page::Standby || covered, lv_tick_get());
     const bool fading_wallpaper = page_ == Page::Standby && wallpaper_transition_.Active();
     const bool play_video = awake_ && page_ == Page::Chat && !covered;
@@ -314,6 +317,11 @@ void WatchUi::SetAwake(bool awake) {
 }
 
 void WatchUi::GoBack() {
+    if (firmware_overlay_) {
+        if (firmware_stage_ == FirmwareUpdateStage::Confirm || firmware_stage_ == FirmwareUpdateStage::Failed)
+            CloseFirmwareUpdate();
+        return;
+    }
     if (power_transition_)
         return;
     if (power_overlay_) {
@@ -363,6 +371,7 @@ void WatchUi::GoBack() {
 }
 
 void WatchUi::Gesture(lv_event_t* e) {
+    if (firmware_overlay_) return;
     if (!awake_ || power_overlay_ || IsBooting())
         return;
     auto code = lv_event_get_code(e);
@@ -510,7 +519,7 @@ void WatchUi::Gesture(lv_event_t* e) {
 }
 
 void WatchUi::Tick() {
-    if (!root_)
+    if (!root_ || firmware_overlay_)
         return;
     if (IsBooting()) {
         const uint32_t now = lv_tick_get();

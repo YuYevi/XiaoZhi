@@ -211,6 +211,9 @@ esp_err_t Ota::CheckVersion() {
     }
 
     has_new_version_ = false;
+    firmware_version_.clear();
+    firmware_url_.clear();
+    firmware_notes_.clear();
     cJSON *firmware = cJSON_GetObjectItem(root, "firmware");
     if (cJSON_IsObject(firmware)) {
         cJSON *version = cJSON_GetObjectItem(firmware, "version");
@@ -220,6 +223,13 @@ esp_err_t Ota::CheckVersion() {
         cJSON *url = cJSON_GetObjectItem(firmware, "url");
         if (cJSON_IsString(url)) {
             firmware_url_ = url->valuestring;
+        }
+        cJSON* notes = cJSON_GetObjectItem(firmware, "description");
+        if (!cJSON_IsString(notes) || !notes->valuestring[0]) {
+            notes = cJSON_GetObjectItem(firmware, "release_notes");
+        }
+        if (cJSON_IsString(notes)) {
+            firmware_notes_ = notes->valuestring;
         }
 
         if (cJSON_IsString(version) && cJSON_IsString(url)) {
@@ -264,7 +274,8 @@ void Ota::MarkCurrentVersionValid() {
     }
 }
 
-bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback) {
+bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback,
+                  std::function<void()> verifying) {
     ESP_LOGI(TAG, "Upgrading firmware from %s", firmware_url.c_str());
     esp_ota_handle_t update_handle = 0;
     auto update_partition = esp_ota_get_next_update_partition(NULL);
@@ -275,7 +286,6 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
 
     ESP_LOGI(TAG, "Writing to partition %s at offset 0x%lx", update_partition->label, update_partition->address);
     bool image_header_checked = false;
-    std::string image_header;
 
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
@@ -309,6 +319,7 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
         int ret = http->Read(buffer + buffer_offset, PAGE_SIZE - buffer_offset);
         if (ret < 0) {
             ESP_LOGE(TAG, "Failed to read HTTP data: %s", esp_err_to_name(ret));
+            if (image_header_checked) esp_ota_abort(update_handle);
             heap_caps_free(buffer);
             return false;
         }
@@ -317,6 +328,12 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
         recent_read += ret;
         total_read += ret;
         buffer_offset += ret;
+        if (total_read > content_length) {
+            ESP_LOGE(TAG, "Firmware exceeds advertised content length");
+            if (image_header_checked) esp_ota_abort(update_handle);
+            heap_caps_free(buffer);
+            return false;
+        }
         if (esp_timer_get_time() - last_calc_time >= 1000000 || ret == 0) {
             size_t progress = total_read * 100 / content_length;
             ESP_LOGI(TAG, "Progress: %u%% (%u/%u), Speed: %uB/s", progress, total_read, content_length, recent_read);
@@ -328,10 +345,9 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
         }
 
         if (!image_header_checked) {
-            image_header.append(buffer, buffer_offset);
-            if (image_header.size() >= sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t)) {
+            if (buffer_offset >= sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t)) {
                 esp_app_desc_t new_app_info;
-                memcpy(&new_app_info, image_header.data() + sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t), sizeof(esp_app_desc_t));
+                memcpy(&new_app_info, buffer + sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t), sizeof(esp_app_desc_t));
 
                 if (esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &update_handle)) {
                     esp_ota_abort(update_handle);
@@ -341,12 +357,17 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
                 }
 
                 image_header_checked = true;
-                std::string().swap(image_header);
             }
         }
 
         // Write to flash when buffer is full (4KB) or it's the last chunk
         bool is_last_chunk = (ret == 0);
+        if (is_last_chunk && (!image_header_checked || total_read != content_length)) {
+            ESP_LOGE(TAG, "Incomplete firmware image");
+            if (image_header_checked) esp_ota_abort(update_handle);
+            heap_caps_free(buffer);
+            return false;
+        }
         if (buffer_offset == PAGE_SIZE || (is_last_chunk && buffer_offset > 0)) {
             auto err = esp_ota_write(update_handle, buffer, buffer_offset);
             if (err != ESP_OK) {
@@ -366,6 +387,7 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
     http->Close();
     heap_caps_free(buffer);
 
+    if (verifying) verifying();
     esp_err_t err = esp_ota_end(update_handle);
     if (err != ESP_OK) {
         if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
