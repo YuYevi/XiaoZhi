@@ -28,11 +28,7 @@ void WatchUi::RenderSettings() {
     detail(item, "熄屏与待机显示");
     arrow(item);
 
-    item = row("languages", "语言", kPurple, [this] {
-        auto settings = snapshot_.settings;
-        settings.language = settings.language ? 0 : 1;
-        SaveSettings(settings);
-    });
+    item = row("languages", "语言", kPurple, [this] { Navigate(Page::LanguageSettings); });
     detail(item, english ? "English" : "简体中文");
     arrow(item);
 
@@ -56,6 +52,24 @@ void WatchUi::RenderSettings() {
     arrow(item);
     if (!snapshot_.storage_error.empty())
         Text(list, snapshot_.storage_error.c_str(), 10, y + 4, 220, 12, kRose, 400, false, 18, 14);
+}
+
+void WatchUi::RenderLanguageSettings() {
+    PageTitle("语言", kPurple);
+    auto* list = page_scroll_ = ScrollList(content_, 60, 96, 240, 210);
+    constexpr const char* names[] = {"简体中文", "English"};
+    for (int language = 0; language < 2; ++language) {
+        const bool selected = snapshot_.settings.language == language;
+        auto* item = Button(list, 0, language * 68, 240, 60, kSurface, 14, [this, language] {
+            if (snapshot_.settings.language == language) return;
+            auto settings = snapshot_.settings;
+            settings.language = language;
+            SaveSettings(settings);
+        });
+        Border(item, selected ? kBlue : 0xffffff, selected ? 150 : 22);
+        SingleLine(Text(item, names[language], 20, 19, 174, 14, kText, 400, false, 22));
+        if (selected) Icon(item, "check", 204, 21, 18, kBlue);
+    }
 }
 
 void WatchUi::RenderDeviceInfo() {

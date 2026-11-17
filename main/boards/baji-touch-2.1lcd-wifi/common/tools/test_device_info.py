@@ -1,4 +1,4 @@
-"""Check the production device-info layout with host widget substitutes."""
+"""Check production settings pages with host widget substitutes."""
 
 from pathlib import Path
 import re
@@ -48,17 +48,19 @@ void lv_obj_set_style_text_align(lv_obj_t* node, int align, int) { node->align =
 uint32_t BlendColor(uint32_t, uint32_t color, float) { return color ^ 1; }
 class WatchUi {
 public:
-    enum class Page { Settings, DisplaySettings, DeviceInfo };
+    enum class Page { Settings, DisplaySettings, LanguageSettings, DeviceInfo };
     enum class Action { CheckUpdate, FactoryReset };
-    struct Settings { int language = 0; };
+    struct Settings { int language = 0, screen_timeout_seconds = 30; };
     struct Snapshot { Settings settings; std::string storage_error; } snapshot_;
     struct Device {
         std::string firmware = "V9.8.7", mac_address = "12:34:56:ab:cd:ef";
     } device_;
     lv_obj_t *content_ = nullptr, *page_scroll_ = nullptr;
     Page page_ = Page::Settings;
+    int saves = 0;
+    Settings saved_settings;
     void Navigate(Page page) { page_ = page; }
-    void SaveSettings(Settings) {}
+    void SaveSettings(Settings settings) { ++saves; saved_settings = settings; }
     void Confirm(const char*, const char*, std::function<void()>) {}
     void Emit(Action) {}
     void PageTitle(const char* text, uint32_t color) {
@@ -91,6 +93,7 @@ public:
     lv_obj_t* SettingsRow(lv_obj_t*, int, const char*, const char*, uint32_t,
                           std::function<void()>);
     void RenderSettings();
+    void RenderLanguageSettings();
     void RenderDeviceInfo();
 };
 '''
@@ -113,6 +116,9 @@ int main() {
     assert(Find("sun")->color == kPurple);
     assert(Find("trash-2")->color == kBlue);
     assert(Find("trash-2")->parent->parent->color == kSurface);
+    Find("languages")->parent->parent->action();
+    assert(ui.page_ == WatchUi::Page::LanguageSettings && ui.snapshot_.settings.language == 0);
+    assert(ui.saves == 0);
 
     objects.clear(); ui.RenderDeviceInfo();
     const char* labels[] = {"系统版本：", "主控芯片：", "屏幕：", "唤醒词：", "MAC地址："};
@@ -137,9 +143,52 @@ int main() {
 }
 '''
 
+LANGUAGE_CASES = r'''
+int main() {
+    WatchUi ui;
+    ui.page_ = WatchUi::Page::LanguageSettings;
+    for (int language = 0; language < 2; ++language) {
+        objects.clear(); ui.snapshot_.settings.language = language;
+        ui.RenderLanguageSettings();
+        assert(Find("语言") && Find("简体中文") && Find("English"));
+        auto *chinese = Find("简体中文"), *english = Find("English"), *check = Find("check");
+        assert(ui.page_scroll_->width == 240 && ui.page_scroll_->height == 210);
+        assert(chinese->parent->width == 240 && chinese->parent->height == 60);
+        assert(english->parent->y == 68);
+        assert(check && check->color == kBlue);
+        assert(check->parent == (language ? english : chinese)->parent);
+        int checks = 0;
+        for (const auto& object : objects) if (object->text == "check") ++checks;
+        assert(checks == 1);
+        assert(check->x >= chinese->x + chinese->width);
+        assert(check->x + check->width <= check->parent->width);
+        assert(check->y + check->height <= check->parent->height);
+        assert(english->parent->y + english->parent->height <= ui.page_scroll_->height);
+
+        const int saves = ui.saves;
+        auto current = (language ? english : chinese)->parent->action;
+        current(); assert(ui.saves == saves);
+        auto other = (language ? chinese : english)->parent->action;
+        other(); assert(ui.saves == saves + 1);
+        assert(ui.saved_settings.language == 1 - language);
+        assert(ui.saved_settings.screen_timeout_seconds == 30);
+        // Selection changes only when the asynchronous save actually succeeds.
+        assert(ui.snapshot_.settings.language == language);
+        objects.clear(); ui.RenderLanguageSettings();
+        assert(Find("check")->parent == Find(language ? "English" : "简体中文")->parent);
+        ui.snapshot_.settings = ui.saved_settings;
+        objects.clear(); ui.RenderLanguageSettings();
+        assert(Find("check")->parent == Find(language ? "简体中文" : "English")->parent);
+        ui.Navigate(WatchUi::Page::Settings);
+        assert(ui.saves == saves + 1);
+        ui.page_ = WatchUi::Page::LanguageSettings;
+    }
+}
+'''
+
 
 class DeviceInfoTest(unittest.TestCase):
-    def test_production_rows_and_icon_styles(self):
+    def run_ui_cases(self, cases):
         compiler = shutil.which("g++") or shutil.which("clang++")
         if not compiler:
             self.skipTest("A host C++ compiler is required")
@@ -150,23 +199,35 @@ class DeviceInfoTest(unittest.TestCase):
                       widgets.index("void WatchUi::RefreshClock(")]
         with tempfile.TemporaryDirectory(prefix="watch-device-info-") as temp:
             source = Path(temp) / "test.cc"
-            source.write_text(PREAMBLE + row + settings + CASES, encoding="utf-8")
+            source.write_text(PREAMBLE + row + settings + cases, encoding="utf-8")
             executable = Path(temp) / "test.exe"
             subprocess.run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror",
                             str(source), "-o", str(executable)], check=True)
             subprocess.run([str(executable)], check=True)
+
+    def test_production_rows_and_icon_styles(self):
+        self.run_ui_cases(CASES)
+
+    def test_language_selection_and_save(self):
+        self.run_ui_cases(LANGUAGE_CASES)
 
     def test_navigation_and_translations(self):
         source = (COMMON / "ui/watch_ui.cc").read_text(encoding="utf-8")
         self.assertIn("case Page::DeviceInfo:\n            RenderDeviceInfo();", source)
         self.assertIn("case Page::DisplaySettings:\n        case Page::DeviceInfo:\n"
                       "            Navigate(Page::Settings);", source)
+        self.assertIn("case Page::LanguageSettings:\n            RenderLanguageSettings();", source)
+        self.assertIn("case Page::LanguageSettings:\n        case Page::DisplaySettings:", source)
+        tick = source[source.index("void WatchUi::Tick()") :]
+        self.assertIn("page_ == Page::LanguageSettings", tick)
         widgets = (COMMON / "ui/watch_ui_widgets.cc").read_text(encoding="utf-8")
         translations = dict(re.findall(r'\{"([^"\n]+)", "([^"\n]+)"\}', widgets))
         for text in ("设备信息", "系统版本：", "主控芯片：", "屏幕：", "唤醒词：",
                      "MAC地址：", "2.1寸屏幕"):
             self.assertIn(text, translations)
         self.assertEqual(translations["MAC地址："], "MAC address")
+        self.assertEqual(translations.get("简体中文", "简体中文"), "简体中文")
+        self.assertEqual(translations.get("English", "English"), "English")
         runtime = (COMMON / "watch/watch_runtime.cc").read_text(encoding="utf-8")
         self.assertIn("device.mac_address = SystemInfo::GetMacAddress();", runtime)
         config = (COMMON.parent / "config.json").read_text(encoding="utf-8")
@@ -188,15 +249,18 @@ class DeviceInfoTest(unittest.TestCase):
                 advances[half_px] = {entry[0]: entry[2] for entry in
                                      (glyph.unpack_from(data, fields[6] + j * glyph.size)
                                       for j in range(fields[5]))}
-        required = "设备信息系统版本：主控芯片屏幕唤醒词MAC地址2.1寸你好小智0123456789abcdef:"
+        required = "语言简体中文English设备信息系统版本：主控芯片屏幕唤醒词MAC地址2.1寸你好小智0123456789abcdef:"
         self.assertFalse(set(map(ord, required)) - faces[28])
         self.assertTrue(set(map(ord, "设备信息")) <= faces[32] | faces[28])
         widest_hex = max(advances[28][ord(char)] for char in "0123456789abcdef")
         self.assertLessEqual((12 * widest_hex + 5 * advances[28][ord(":")]) / 16, 142)
+        for name in ("简体中文", "English"):
+            self.assertLessEqual(sum(advances[28][ord(char)] for char in name) / 16, 174)
         icon = struct.Struct("<32sHHII")
         icons = {icon.unpack_from(data, header[8] + i * icon.size)[0].rstrip(b"\0")
                  for i in range(header[4])}
         self.assertIn(b"info@18", icons)
+        self.assertIn(b"check@18", icons)
 
 
 if __name__ == "__main__":

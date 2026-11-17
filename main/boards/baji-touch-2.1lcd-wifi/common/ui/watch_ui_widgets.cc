@@ -200,7 +200,6 @@ std::string LocalizedText(const std::string& text, bool english) {
         {"时钟与日期", "Clock and date"},
         {"待机页面", "Standby screen"},
         {"语言", "Language"},
-        {"简体中文", "English"},
         {"常亮显示", "Always on"},
         {"自动熄屏", "Screen timeout"},
         {"15 秒", "15 seconds"},

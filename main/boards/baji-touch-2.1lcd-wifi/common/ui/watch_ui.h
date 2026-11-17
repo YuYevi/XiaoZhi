@@ -27,6 +27,7 @@ class WatchUi {
         Countdown,
         Settings,
         DisplaySettings,
+        LanguageSettings,
         DeviceInfo,
         AlarmEditor,
         Network,
@@ -250,6 +251,7 @@ class WatchUi {
     void RenderAlarmEditor();
     void RenderSettings();
     void RenderDisplaySettings();
+    void RenderLanguageSettings();
     void RenderDeviceInfo();
     lv_obj_t* SettingsRow(lv_obj_t* parent, int y, const char* icon, const char* title,
                           uint32_t accent, std::function<void()> action);
