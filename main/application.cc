@@ -287,8 +287,10 @@ void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
     auto state = GetDeviceState();
 
-    if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
-        // Network is ready, start activation
+    if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring ||
+        (state == kDeviceStateIdle && !protocol_)) {
+        // A cancelled provisioning attempt may reconnect from local idle after
+        // its protocol was reset. That path also needs activation to recreate it.
         SetDeviceState(kDeviceStateActivating);
         if (activation_task_handle_ != nullptr) {
             ESP_LOGW(TAG, "Activation task already running");

@@ -483,8 +483,21 @@ private:
         watch_->SetNetworkActions([this](int requested) {
             SelectWifiNetwork(requested);
         }, [this]() {
-            if (network_offline_) { display_->ShowNotification("请先开启 WLAN"); return; }
+            if (switching_) return;
             const auto state = Application::GetInstance().GetDeviceState();
+            if (network_offline_) {
+                if (state != kDeviceStateIdle || !SaveOfflineMode(false)) return;
+                network_offline_ = false;
+                watch_->SetNetworkEnabled(true);
+                // Offline boot never initialized Wi-Fi. Start its native owner once.
+                WifiBoard::StartNetwork();
+                if (IsInWifiConfigMode()) return;
+            }
+            if (IsInWifiConfigMode() || IsWifiConfigModePending()) {
+                ExitWifiConfigMode();
+                display_->ShowNotification("已取消配网");
+                return;
+            }
             if (state == kDeviceStateIdle || state == kDeviceStateStarting)
                 EnterWifiConfigMode();
             else if (state == kDeviceStateWifiConfiguring)

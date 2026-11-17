@@ -154,8 +154,7 @@ void WatchRuntime::Initialize() {
             Application::GetInstance().Schedule([self, generation]() {
                 if (generation != self->power_tap_generation_.load() || !self->power_tap_at_) return;
                 if (esp_timer_get_time() - self->power_tap_at_ < 320000) return;
-                self->power_tap_at_ = 0;
-                if (self->IsAwake()) self->Back();
+                self->FinishPowerTap();
             });
         },
         .arg = this,
@@ -253,7 +252,16 @@ void WatchRuntime::Chat() {
 void WatchRuntime::CancelPowerTap() {
     ++power_tap_generation_;
     power_tap_at_ = 0;
+    power_tap_count_ = 0;
     if (power_tap_timer_) esp_timer_stop(power_tap_timer_);
+}
+
+void WatchRuntime::FinishPowerTap() {
+    const uint8_t count = power_tap_count_;
+    CancelPowerTap();
+    if (!IsAwake()) return;
+    if (count == 1) Back();
+    else if (count == 2) Chat();
 }
 
 void WatchRuntime::PowerTap() {
@@ -272,13 +280,19 @@ void WatchRuntime::PowerTap() {
     const int64_t now = esp_timer_get_time();
     last_activity_ = now;
     if (power_tap_at_ && now - power_tap_at_ < 320000) {
-        CancelPowerTap();
-        Chat();
-        return;
+        ++power_tap_count_;
+        if (power_tap_count_ == 3) {
+            CancelPowerTap();
+            Action(WatchUi::Action::StartWifiConfig, 0);
+            return;
+        }
+    } else {
+        // A delayed timer dispatch must still complete the previous gesture.
+        if (power_tap_at_) FinishPowerTap();
+        power_tap_count_ = 1;
     }
-    // If dispatch was delayed past the timer deadline, preserve the first tap.
-    if (power_tap_at_) Back();
-    CancelPowerTap();
+    ++power_tap_generation_;
+    esp_timer_stop(power_tap_timer_);
     power_tap_at_ = now;
     ESP_ERROR_CHECK(esp_timer_start_once(power_tap_timer_, 320000));
 }

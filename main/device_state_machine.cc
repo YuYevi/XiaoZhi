@@ -50,8 +50,9 @@ bool DeviceStateMachine::IsValidTransition(DeviceState from, DeviceState to) con
                    to == kDeviceStateActivating;
 
         case kDeviceStateWifiConfiguring:
-            // Can go to activating (after wifi connected) or audio testing
+            // Cancellation returns to local idle without discarding credentials.
             return to == kDeviceStateActivating ||
+                   to == kDeviceStateIdle ||
                    to == kDeviceStateAudioTesting;
 
         case kDeviceStateAudioTesting:

@@ -5,11 +5,15 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <esp_timer.h>
+#include <atomic>
 
 class WifiBoard : public Board {
 protected:
     esp_timer_handle_t connect_timer_ = nullptr;
     bool in_config_mode_ = false;
+    std::atomic<bool> config_mode_pending_{false};
+    std::atomic<bool> config_mode_cancelled_{false};
+    std::atomic<uint32_t> config_mode_generation_{0};
     NetworkEventCallback network_event_callback_ = nullptr;
 
     virtual std::string GetBoardJson() override;
@@ -59,6 +63,10 @@ public:
      * Enter WiFi configuration mode (thread-safe, can be called from any task)
      */
     void EnterWifiConfigMode();
+
+    // Called on the application task; keeps saved credentials for reconnection.
+    void ExitWifiConfigMode();
+    bool IsWifiConfigModePending() const { return config_mode_pending_.load(); }
     
     /**
      * Check if in WiFi config mode

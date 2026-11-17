@@ -292,6 +292,7 @@ std::string LocalizedText(const std::string& text, bool english) {
         {"思考中...", "Thinking..."},
         {"设备忙，请稍后切换网络", "Device busy. Switch networks later"},
         {"网络设置保存失败，请重试", "Cannot save network. Try again"},
+        {"已取消配网", "Wi-Fi setup cancelled"},
         {"请结束对话或等待系统任务完成", "End chat or wait for system tasks"},
         {"切换WiFi？短按音量+确认", "Switch to Wi-Fi? Press Volume +"},
         {"请先开启 WLAN", "Turn on Wi-Fi first"},

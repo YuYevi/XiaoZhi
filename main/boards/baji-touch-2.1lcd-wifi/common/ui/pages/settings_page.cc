@@ -8,7 +8,6 @@ void WatchUi::RenderSettings() {
     PageTitle("设置", kPurple);
     auto* list = page_scroll_ = ScrollList(content_, 60, 96, 240, 210);
     const bool english = snapshot_.settings.language != 0;
-    const bool wifi = device_.network.find("Wi-Fi") != std::string::npos;
     int y = 0;
     auto row = [&](const char* icon, const char* title, uint32_t accent,
                    std::function<void()> action) {
@@ -25,21 +24,7 @@ void WatchUi::RenderSettings() {
         lv_obj_align(Icon(item, "chevron-right", 0, 0, 18, kMuted), LV_ALIGN_RIGHT_MID, -10, 0);
     };
 
-    auto* item = row("wifi", "WLAN", wifi ? kBlue : kMuted, [this] {
-        wifi_phase_ = "list";
-        wifi_error_.clear();
-        Navigate(Page::Network);
-        if (wifi_scan_) wifi_scan_();
-    });
-    settings_wifi_label_ = detail(item, device_.wifi_connected ? device_.wifi_ssid.c_str() :
-                                  english ? "Offline" : "未连接", kMuted, 120);
-    if (device_.wifi_connected) SetLabelText(settings_wifi_label_, device_.wifi_ssid.c_str());
-    Switch(item, wifi, 0x3b6ea8, [this, wifi] {
-        Confirm("WLAN", wifi ? "设备将重启并关闭 WLAN。" : "设备将重启并开启 WLAN。",
-                [this, wifi] { Emit(Action::SetNetwork, wifi ? -1 : 0); });
-    });
-
-    item = row("sun", "显示设置", kPurple, [this] { Navigate(Page::DisplaySettings); });
+    auto* item = row("sun", "显示设置", kPurple, [this] { Navigate(Page::DisplaySettings); });
     detail(item, "熄屏与待机显示");
     arrow(item);
 

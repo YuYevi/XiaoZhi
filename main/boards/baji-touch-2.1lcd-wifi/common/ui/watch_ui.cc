@@ -134,8 +134,7 @@ void WatchUi::Render() {
     chat_header_text_.clear();
     wifi_loader_ = thinking_ = answer_cursor_ = nullptr;
     wifi_input_ = wifi_password_label_ = wifi_hint_ = wifi_eye_icon_ = wifi_join_ = wifi_join_icon_ = nullptr;
-    calendar_days_ = clock_minute_ = clock_colon_ = chat_timer_dot_ = settings_wifi_label_ =
-        nullptr;
+    calendar_days_ = clock_minute_ = clock_colon_ = chat_timer_dot_ = nullptr;
     voice_bars_.fill(nullptr);
     thinking_dots_.fill(nullptr);
     // Central page routing; page implementations live in pages/.
@@ -258,22 +257,8 @@ void WatchUi::RefreshDynamic() {
 void WatchUi::UpdateDeviceSnapshot(const DeviceSnapshot& d) {
     bool changed =
         d.network != device_.network || d.battery != device_.battery || d.charging != device_.charging;
-    bool wifi_changed = d.wifi_connected != device_.wifi_connected || d.wifi_ssid != device_.wifi_ssid;
     const bool chat_changed = d.chat_active != device_.chat_active;
     device_ = d;
-    if (wifi_changed && settings_wifi_label_) {
-        const char* text = device_.wifi_connected        ? device_.wifi_ssid.c_str()
-                           : snapshot_.settings.language ? "Offline"
-                                                         : "未连接";
-        const auto* font = Font(12);
-        SetLabelText(settings_wifi_label_, text);
-        lv_obj_set_style_text_font(settings_wifi_label_, font, 0);
-        lv_obj_set_style_text_line_space(settings_wifi_label_,
-                                        18 - font->line_height, 0);
-        SingleLine(settings_wifi_label_);
-        lv_obj_set_pos(settings_wifi_label_, 54, 33 + std::lround((18 - font->line_height) * .5f));
-        lv_obj_set_width(settings_wifi_label_, 120);
-    }
     if (device_.volume > 0)
         remembered_volume_ = device_.volume;
     if (changed && content_ && !IsBooting())

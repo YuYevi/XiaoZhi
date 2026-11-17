@@ -41,6 +41,7 @@ private:
     bool power_reboot_ = false;
     int64_t power_reboot_at_ = 0;
     int64_t power_tap_at_ = 0;
+    uint8_t power_tap_count_ = 0;
     std::atomic<uint32_t> power_tap_generation_{0};
     std::function<void()> power_off_;
     bool ringing_ = false;
@@ -74,6 +75,7 @@ private:
     void Sleep();
     void RequestSleep();
     void CancelPowerTap();
+    void FinishPowerTap();
     void RequestPowerChange(bool reboot);
     void Action(WatchUi::Action action, int value);
     void StopChat();

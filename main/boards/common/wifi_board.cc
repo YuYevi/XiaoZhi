@@ -12,6 +12,7 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <utility>
+#include <memory>
 
 #include <material_symbols.h>
 #include <wifi_manager.h>
@@ -143,7 +144,7 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
             ESP_LOGI(TAG, "WiFi config mode exited");
             in_config_mode_ = false;
             // Try to connect with the new credentials
-            TryWifiConnect();
+            if (!config_mode_cancelled_) TryWifiConnect();
             break;
         default:
             break;
@@ -161,13 +162,17 @@ void WifiBoard::SetNetworkEventCallback(NetworkEventCallback callback) {
 
 void WifiBoard::OnWifiConnectTimeout(void* arg) {
     auto* board = static_cast<WifiBoard*>(arg);
-    ESP_LOGW(TAG, "WiFi connection timeout, entering config mode");
-
-    WifiManager::GetInstance().StopStation();
-    board->StartWifiConfigMode();
+    Application::GetInstance().Schedule([board]() {
+        if (board->config_mode_cancelled_ || WifiManager::GetInstance().IsConnected()) return;
+        ESP_LOGW(TAG, "WiFi connection timeout, entering config mode");
+        WifiManager::GetInstance().StopStation();
+        board->StartWifiConfigMode();
+    });
 }
 
 void WifiBoard::StartWifiConfigMode() {
+    config_mode_pending_ = false;
+    config_mode_cancelled_ = false;
     in_config_mode_ = true;
     // Transition to wifi configuring state
     Application::GetInstance().SetDeviceState(kDeviceStateWifiConfiguring);
@@ -177,7 +182,9 @@ void WifiBoard::StartWifiConfigMode() {
     wifi_manager.StartConfigAp();
 
     // Show config prompt after a short delay
-    Application::GetInstance().Schedule([&wifi_manager]() {
+    const uint32_t generation = config_mode_generation_.load();
+    Application::GetInstance().Schedule([this, &wifi_manager, generation]() {
+        if (generation != config_mode_generation_ || config_mode_cancelled_ || !wifi_manager.IsConfigMode()) return;
         std::string hint = Lang::Strings::CONNECT_TO_HOTSPOT;
         hint += wifi_manager.GetApSsid();
         hint += Lang::Strings::ACCESS_VIA_BROWSER;
@@ -193,37 +200,52 @@ void WifiBoard::StartWifiConfigMode() {
 }
 
 void WifiBoard::EnterWifiConfigMode() {
+    if (IsInWifiConfigMode() || config_mode_pending_) return;
     ESP_LOGI(TAG, "EnterWifiConfigMode called");
-    GetDisplay()->ShowNotification(Lang::Strings::ENTERING_WIFI_CONFIG_MODE);
 
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
 
+    if (state != kDeviceStateStarting && state != kDeviceStateSpeaking &&
+        state != kDeviceStateNotifying && state != kDeviceStateListening && state != kDeviceStateIdle) {
+        ESP_LOGE(TAG, "Cannot enter WiFi config mode in device state: %d", state);
+        return;
+    }
+    config_mode_cancelled_ = false;
+    const uint32_t generation = ++config_mode_generation_;
+    GetDisplay()->ShowNotification(Lang::Strings::ENTERING_WIFI_CONFIG_MODE);
+
     if (state == kDeviceStateSpeaking || state == kDeviceStateNotifying ||
         state == kDeviceStateListening || state == kDeviceStateIdle) {
-        // Reset protocol (close audio channel, reset protocol)
-        Application::GetInstance().ResetProtocol();
-
-        xTaskCreate([](void* arg) {
-            auto* board = static_cast<WifiBoard*>(arg);
+        config_mode_pending_ = true;
+        auto* request = new std::pair<WifiBoard*, uint32_t>(this, generation);
+        const auto result = xTaskCreate([](void* arg) {
+            std::unique_ptr<std::pair<WifiBoard*, uint32_t>> request(
+                static_cast<std::pair<WifiBoard*, uint32_t>*>(arg));
+            auto* board = request->first;
+            const auto generation = request->second;
 
             // Wait for 1 second to allow speaking to finish gracefully
             vTaskDelay(pdMS_TO_TICKS(1000));
 
-            // Stop any ongoing connection attempt
-            esp_timer_stop(board->connect_timer_);
-            WifiManager::GetInstance().StopStation();
-
-            // Enter config mode
-            board->StartWifiConfigMode();
+            Application::GetInstance().Schedule([board, generation]() {
+                if (!board->config_mode_pending_ || generation != board->config_mode_generation_) return;
+                esp_timer_stop(board->connect_timer_);
+                WifiManager::GetInstance().StopStation();
+                board->StartWifiConfigMode();
+            });
+            request.reset();
 
             vTaskDelete(NULL);
-        }, "wifi_cfg_delay", 4096, this, 2, NULL);
-        return;
-    }
-
-    if (state != kDeviceStateStarting) {
-        ESP_LOGE(TAG, "EnterWifiConfigMode called but device state is not starting or speaking, device state: %d", state);
+        }, "wifi_cfg_delay", 4096, request, 2, NULL);
+        if (result != pdPASS) {
+            delete request;
+            config_mode_pending_ = false;
+            ESP_LOGE(TAG, "Failed to create WiFi config task");
+        } else {
+            // Reset only after the delayed transition was successfully queued.
+            app.ResetProtocol();
+        }
         return;
     }
 
@@ -232,6 +254,27 @@ void WifiBoard::EnterWifiConfigMode() {
     WifiManager::GetInstance().StopStation();
 
     StartWifiConfigMode();
+}
+
+void WifiBoard::ExitWifiConfigMode() {
+    auto& wifi = WifiManager::GetInstance();
+    if (!config_mode_pending_ && !wifi.IsConfigMode()) return;
+    const uint32_t generation = ++config_mode_generation_;
+    config_mode_pending_ = false;
+    config_mode_cancelled_ = true;
+    esp_timer_stop(connect_timer_);
+    wifi.StopConfigAp();
+    in_config_mode_ = false;
+
+    auto& app = Application::GetInstance();
+    if (app.GetDeviceState() == kDeviceStateWifiConfiguring) app.SetDeviceState(kDeviceStateIdle);
+    // Finish any queued protocol reset before reporting a still-live connection.
+    app.Schedule([this, generation]() {
+        if (generation != config_mode_generation_ || !config_mode_cancelled_) return;
+        auto& wifi = WifiManager::GetInstance();
+        if (wifi.IsConnected()) OnNetworkEvent(NetworkEvent::Connected, wifi.GetSsid());
+        else if (!SsidManager::GetInstance().GetSsidList().empty()) wifi.StartStation();
+    });
 }
 
 bool WifiBoard::IsInWifiConfigMode() const {

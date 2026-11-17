@@ -174,7 +174,7 @@ class WatchUi {
              *brightness_value_ = nullptr, *volume_value_ = nullptr;
     lv_obj_t *calendar_strip_ = nullptr, *alarm_drag_row_ = nullptr;
     lv_obj_t *calendar_days_ = nullptr, *clock_minute_ = nullptr, *clock_colon_ = nullptr,
-             *chat_timer_dot_ = nullptr, *settings_wifi_label_ = nullptr;
+             *chat_timer_dot_ = nullptr;
     lv_obj_t *wifi_loader_ = nullptr, *thinking_ = nullptr, *answer_cursor_ = nullptr;
     lv_obj_t *boot_progress_ = nullptr, *boot_later_ = nullptr, *boot_message_ = nullptr,
              *boot_status_label_ = nullptr;
