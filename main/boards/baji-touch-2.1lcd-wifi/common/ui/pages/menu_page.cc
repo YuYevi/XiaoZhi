@@ -51,8 +51,7 @@ lv_obj_t* WatchUi::MenuCard(int x, int y, int width, int height, uint32_t accent
                 }
             }
             if (code == LV_EVENT_RELEASED) AnimateMenuPlate(plate, 256, 120);
-        } else if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CANCEL ||
-                   code == LV_EVENT_INDEV_RESET) {
+        } else if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CANCEL) {
             press->dragged = true;
             AnimateMenuPlate(plate, 256, 120);
         } else if (code == LV_EVENT_CLICKED && interactive && !press->dragged && !swiped_ &&

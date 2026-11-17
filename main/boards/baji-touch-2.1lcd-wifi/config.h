@@ -73,7 +73,6 @@
 // CST836U shares the codec I2C bus (GPIO6/7) and LCD reset (TCA9554 P7).
 #define TOUCH_INT_GPIO GPIO_NUM_17
 #define TOUCH_RST_GPIO GPIO_NUM_NC
-#define TOUCH_I2C_ADDRESS 0x15
 
 // Requires the optional Application local-audio ownership extension.
 #define BAJI_WATCH_LOCAL_AUDIO 0
